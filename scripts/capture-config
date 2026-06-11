@@ -1,0 +1,28 @@
+# Capture sizing — how much of a session each flush captures.
+# Edit the values and start a new session to apply (no code changes needed).
+#
+# Delta capture means a flush already grabs everything since the last save;
+# these knobs bound that:
+#
+#   max_turns    The FIRST flush of a session (before any save) grabs this many
+#                recent turns. Also the "window" the status line counts against
+#                (it warns as turns-since-save approaches this).
+#   max_chars    Hard cap on a single flush's captured text. A larger span is
+#                trimmed to the most recent this-many characters, then chunked.
+#                Raise this if you compact very rarely and want bigger captures.
+#   chunk_chars  Size of each chunk sent to the summarizer for big captures.
+
+max_turns = 120
+max_chars = 50000
+chunk_chars = 45000
+
+# compile_chunk_chars: max daily-log content compiled per LLM pass. A large daily
+# (e.g. many ingested docs) is split at ENTRY boundaries (Doc Ingest / Session /
+# Memory Flush) into parts under this size, each compiled with full context. This
+# keeps the compile prompt from overflowing the model's context window.
+compile_chunk_chars = 40000
+
+# compile_part_timeout: seconds before a hung compile part is abandoned (so one
+# stuck API/CLI call can't block the whole compile forever). The part is marked
+# failed and the daily is retried on the next compile.
+compile_part_timeout = 300

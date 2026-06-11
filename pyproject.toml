@@ -1,0 +1,13 @@
+[project]
+name = "devlore"
+version = "0.1.0"
+description = "Every codebase has lore. devlore compiles your AI conversations into a self-checking knowledge base."
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk>=0.1.29",
+    "python-dotenv>=1.0.0",
+    "tzdata>=2024.1",
+]
+
+[tool.ruff]
+line-length = 100

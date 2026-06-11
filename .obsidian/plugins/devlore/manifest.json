@@ -1,0 +1,10 @@
+{
+  "id": "devlore",
+  "name": "devlore",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "devlore side panel: ingest notes, compile the KB, ask questions. Single-purpose: only ever runs scripts in the KB directory — not a general command runner.",
+  "author": "devlore contributors",
+  "authorUrl": "https://github.com/condechi/devlore",
+  "isDesktopOnly": true
+}

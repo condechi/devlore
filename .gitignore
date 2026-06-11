@@ -1,0 +1,49 @@
+# Commit strategy (decided 2026-06-03): LOCAL-ONLY git tracks everything that makes
+# the knowledge base AUDITABLE and REPLICABLE — knowledge/, daily/ (the immutable
+# source layer), the machinery (scripts/hooks/AGENTS.md/commands/plugin), and the
+# pipeline state that makes incremental compilation and ingest-dedup work
+# (scripts/state.json, flush markers). Only regenerable runtime noise is ignored.
+# The pipeline auto-commits after each successful write (compile/attest/ingest).
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Symlinks to external repos — never track or recurse into these
+# (they are their own git repos; this repo references them for convenience)
+crm
+metadata
+claude-config
+
+# Runtime noise (regenerated; NOT part of the auditable KB).
+# NOTE: scripts/state.json and scripts/flush-marker-* ARE tracked on purpose —
+# they are pipeline state (incremental-compile + ingest-dedup), not noise.
+scripts/*.log
+scripts/compile.lock
+scripts/compile.status.json
+scripts/last-flush.json
+scripts/session-flush-*
+scripts/flush-context-*
+scripts/activity.jsonl
+scripts/*.bak*
+scripts/__pycache__/
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Obsidian is local config — EXCEPT our hand-built devlore plugin (machinery)
+.obsidian/*
+!.obsidian/plugins/
+.obsidian/plugins/*
+!.obsidian/plugins/devlore/
+
+# Batch-ingest snapshots (tars); the quarantine *.md reviews ARE tracked
+quarantine/.snapshots/
+
+# Stale pre-git backup of knowledge/ (superseded by git itself)
+knowledge.tar
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# devlore — your AI conversations, compiled into a self-checking knowledge base.
+# This dispatcher operates on the KB it lives in (self-locating, multi-KB safe).
+set -uo pipefail
+
+# Resolve symlinks so KB is the real KB root even when devlore is invoked through
+# a symlink on PATH (install.sh links ~/.local/bin/devlore → <KB>/scripts/devlore).
+src="${BASH_SOURCE[0]:-$0}"
+while [ -h "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+KB="$(cd -P "$(dirname "$src")/.." >/dev/null 2>&1 && pwd)"
+PY() { uv run --directory "$KB" python "$KB/scripts/$1" "${@:2}"; }
+
+# Installed KBs and the dist carry a VERSION file; a source checkout falls back
+# to the constant in build_dist.py.
+VER="$(cat "$KB/VERSION" 2>/dev/null || sed -n 's/^VERSION = "\(.*\)"$/\1/p' "$KB/scripts/build_dist.py" 2>/dev/null)"
+VER="${VER:-dev}"
+
+cmd="${1:-help}"
+case "$cmd" in
+  add)        PY add_codebase.py "${@:2}" ;;
+  ask)        PY query.py "${@:2}" ;;
+  compile)    PY compile.py "${@:2}" ;;
+  verify)     PY verify.py "${@:2}" ;;
+  backfill)   PY ingest_all_context.py "${@:2}" ;;
+  docs)       PY ingest_doc.py "${@:2}" && PY compile.py ;;
+  recheck)    PY recheck.py "${@:2}" ;;
+  update)     PY update_kb.py "${@:2}" ;;
+  init)       PY init_kb.py "${@:2}" ;;
+  version|--version|-V)
+    echo "devlore v$VER  (KB: $KB)"
+    ;;
+  status)
+    echo "devlore v$VER — knowledge base: $KB"
+    total=0; parts=""
+    for d in concepts connections qa mocs; do
+      c=$(ls "$KB/knowledge/$d"/*.md 2>/dev/null | wc -l | tr -d ' ')
+      total=$((total + c)); parts="$parts$c $d, "
+    done
+    echo "  articles:     $total  (${parts%, })"
+    echo "                knowledge/index.md is the catalog"
+    dl=$(ls "$KB"/daily/2*.md 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$dl" -gt 0 ]; then
+      first=$(basename "$(ls "$KB"/daily/2*.md | head -1)" .md)
+      last=$(basename "$(ls "$KB"/daily/2*.md | tail -1)" .md)
+      echo "  dailies:      $dl daily log(s), $first → $last"
+    else
+      echo "  dailies:      none yet"
+    fi
+    mk=$(ls "$KB"/scripts/flush-marker-*.json 2>/dev/null | wc -l | tr -d ' ')
+    echo "  sessions:     $mk conversation(s) captured"
+    q=$(ls "$KB"/quarantine/*.md 2>/dev/null | wc -l | tr -d ' ')
+    [ "$q" -gt 0 ] && echo "  quarantine:   $q conversation(s) awaiting review"
+    echo "  capture roots (live conversation capture is on for):"
+    grep -v '^\s*#\|^\s*$' "$KB/scripts/capture-roots" 2>/dev/null | sed 's/^/    /' \
+      || echo "    (none — run: devlore add <codebase>)"
+    cr=$(grep -v '^\s*#\|^\s*$' "$KB/scripts/code-roots" 2>/dev/null | tr '\n' ' ')
+    [ -n "$cr" ] && echo "  code roots:   $cr"
+    ledger=$(python3 -c "import json; d = json.load(open('$KB/scripts/state.json')); print('%.2f USD total compile/query spend, %d question(s) answered' % (d.get('total_cost', 0), d.get('query_count', 0)))" 2>/dev/null)
+    [ -n "$ledger" ] && echo "  ledger:       $ledger"
+    echo "  recent commits:"
+    git -C "$KB" log --oneline -3 2>/dev/null | sed 's/^/    /'
+    PY staleness.py | head -3
+    ;;
+  help|--help|-h|*)
+    cat <<EOF
+devlore v$VER — your AI conversations, compiled into a self-checking knowledge base
+KB: $KB
+
+The loop: every Claude Code session in an opted-in codebase is captured into
+daily/ logs; \`compile\` distills them into wiki articles under knowledge/; the
+article index is injected into each new session, so your assistant starts
+already knowing your project's lore.
+
+Getting started
+  devlore add <codebase>      opt a repo in: live capture from now on, plus an
+                              offer to backfill its past conversations and
+                              ingest its markdown docs (git-aware scan of the
+                              root + first-level dirs; --full-recursive for
+                              the whole tree)
+  devlore status              what this KB holds: articles, dailies, captured
+                              sessions, capture roots, spend, staleness
+  devlore ask "question"      cited answer from the KB (index-guided retrieval;
+                              --dev adds live file:line code pointers,
+                              --file-back saves the answer as a qa/ article)
+
+Day to day
+  devlore compile             compile pending daily logs into wiki articles
+  devlore docs <file|dir>     ingest hand-written markdown, then compile (a dir
+                              scans root + first-level subdirs, git-aware;
+                              --full-recursive scans the whole tree)
+  devlore backfill            batch-ingest past conversations (shows a plan and
+                              cost estimate first; add --yes to execute)
+
+Trust & upkeep
+  devlore verify              hallucination + staleness gates (Tier-1/2)
+  devlore recheck             refresh needs-reverification marks after edits
+  devlore update              refresh this KB's machinery from the latest
+                              release — knowledge/, daily/, and your config are
+                              never touched
+  devlore version             print the installed devlore version
+
+Elsewhere
+  devlore init <dir> [...]    bootstrap ANOTHER knowledge base in a new
+                              directory (each KB is independent)
+
+Safe by default: backfill and compile show the plan and the bill before
+spending anything, and update never touches what makes the KB yours.
+
+A note on doc ingestion: every accepted file is compiled by the LLM — real
+cost. devlore filters out gitignored, vendored, and third-party markdown
+(git-aware scan + deny-list), but those filters are best-effort: review the
+preview before confirming, especially with --full-recursive.
+EOF
+    ;;
+esac
