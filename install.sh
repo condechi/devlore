@@ -129,7 +129,7 @@ echo
 say "Done. The magic moment:"
 cat <<EOF
 
-    cd ~/code/your-project      # any repo you've used Claude Code in
+    cd ~/code/your-project      # any repo you've used Claude Code or Codex in
     devlore add .
 
 It wires automatic capture, finds your PAST conversations (with a cost

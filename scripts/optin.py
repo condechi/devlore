@@ -5,7 +5,7 @@ Capturing a directory needs two things:
   1. it must be listed in scripts/capture-roots (the gate), and
   2. the capture hooks must fire for sessions there — which, for a directory
      OUTSIDE the KB's own git project, means wiring the hooks into that
-     project's own .claude/settings.local.json.
+     project's own Claude Code and Codex hook config.
 
 This script does both. Directories INSIDE the KB project are already covered
 by its own hooks, so for those only step 1 is needed.
@@ -14,43 +14,19 @@ Usage:
     uv run python scripts/optin.py <directory> [--exact]
 
     <directory>   path to opt in (symlinks are resolved to their real path,
-                  because that's what Claude Code uses for project detection)
+                  because the local agents use project roots for hook detection)
     --exact       capture ONLY that exact directory, not its subdirectories
                   (default is subtree: the directory and everything under it)
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent          # the KB root
 CAPTURE_ROOTS = ROOT / "scripts" / "capture-roots"
-
-# The hooks block wired into an external project's settings.local.json. Absolute
-# command so it runs from any cwd; the gate uses the session cwd from hook stdin.
-HOOK_EVENTS = {
-    "SessionStart": ("session-start.py", 15),
-    "PreCompact": ("pre-compact.py", 10),
-    "SessionEnd": ("session-end.py", 10),
-}
-
-
-def hooks_block() -> dict:
-    block = {}
-    for event, (script, timeout) in HOOK_EVENTS.items():
-        block[event] = [{
-            "matcher": "",
-            "hooks": [{
-                "type": "command",
-                "command": f"uv run --directory {ROOT} python hooks/{script}",
-                "timeout": timeout,
-            }],
-        }]
-    return block
-
 
 def add_to_capture_roots(real: Path, exact: bool) -> bool:
     """Append the path to capture-roots if not already present. Returns True if added."""
@@ -68,7 +44,7 @@ def add_to_capture_roots(real: Path, exact: bool) -> bool:
 
 
 def project_root_of(real: Path) -> Path:
-    """The directory Claude Code treats as the project root (git root, else the dir)."""
+    """The directory local coding agents treat as the project root."""
     try:
         out = subprocess.run(
             ["git", "-C", str(real), "rev-parse", "--show-toplevel"],
@@ -80,31 +56,9 @@ def project_root_of(real: Path) -> Path:
 
 
 def wire_hooks(proj: Path) -> str:
-    """Merge devlore hooks into proj/.claude/settings.local.json. Idempotent."""
-    claude_dir = proj / ".claude"
-    settings = claude_dir / "settings.local.json"
-    data: dict = {}
-    if settings.exists():
-        try:
-            data = json.loads(settings.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return f"!! could not parse {settings} — wire hooks manually"
-    hooks = data.setdefault("hooks", {})
-    added = []
-    for event, (script, timeout) in HOOK_EVENTS.items():
-        cmd = f"uv run --directory {ROOT} python hooks/{script}"
-        groups = hooks.setdefault(event, [])
-        already = any(h.get("command") == cmd
-                      for g in groups for h in g.get("hooks", []))
-        if not already:
-            groups.append({"matcher": "", "hooks": [
-                {"type": "command", "command": cmd, "timeout": timeout}]})
-            added.append(event)
-    claude_dir.mkdir(parents=True, exist_ok=True)
-    settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    if added:
-        return f"++ wired {', '.join(added)} into {settings}"
-    return f"== hooks already present in {settings}"
+    """Merge devlore hooks into Claude Code and Codex hook configs."""
+    from init_kb import merge_codebase_hooks
+    return merge_codebase_hooks(proj, ROOT, dry=False)
 
 
 def main() -> None:

@@ -1,8 +1,8 @@
 """Gated batch backfill of never-flushed conversations (PR D, final item).
 
-Sweeps the Claude Code transcript store for conversations in the CAPTURED project
-roots (scripts/capture-roots) that have no flush marker, and runs each through the
-full pipeline, OLDEST first:
+Sweeps the Claude Code and Codex transcript stores for conversations in the
+CAPTURED project roots (scripts/capture-roots) that have no flush marker, and
+runs each through the full pipeline, OLDEST first:
 
     distill (tiered model) → append to the conversation's OWN dated daily →
     compile --file → regression check → Tier-1 verification gate →
@@ -55,12 +55,22 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from capture_config import get_limits  # noqa: E402
 from config import DAILY_DIR, KNOWLEDGE_DIR, now_iso, system_cli_path  # noqa: E402
+from transcripts import (  # noqa: E402
+    transcript_dialogue,
+    transcript_metadata,
+    transcript_session_id,
+)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "hooks"))
+from capture_gate import should_capture  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 QUARANTINE = ROOT / "quarantine"
 SNAPSHOTS = QUARANTINE / ".snapshots"
 PROJECTS_STORE = Path.home() / ".claude" / "projects"
+CODEX_HOME = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+CODEX_SESSIONS_STORE = CODEX_HOME / "sessions"
 CAPTURE_ROOTS = SCRIPTS / "capture-roots"
 
 LIMITS = get_limits()
@@ -94,6 +104,8 @@ def captured_project_dirs() -> list[Path]:
             continue
         (subtree if line.endswith("/") else exact).append(line.rstrip("/"))
     dirs: list[Path] = []
+    if not PROJECTS_STORE.exists():
+        return dirs
     for d in sorted(PROJECTS_STORE.iterdir()):
         if not d.is_dir():
             continue
@@ -105,6 +117,18 @@ def captured_project_dirs() -> list[Path]:
     return dirs
 
 
+def captured_codex_transcripts() -> list[Path]:
+    """Codex stores transcripts by date, with cwd in session_meta."""
+    if not CODEX_SESSIONS_STORE.exists():
+        return []
+    out: list[Path] = []
+    for t in sorted(CODEX_SESSIONS_STORE.glob("**/*.jsonl")):
+        cwd = transcript_metadata(t).get("cwd", "")
+        if isinstance(cwd, str) and should_capture(cwd):
+            out.append(t)
+    return out
+
+
 def _flushed_session_ids() -> set[str]:
     return {p.stem.replace("flush-marker-", "") for p in SCRIPTS.glob("flush-marker-*.json")}
 
@@ -112,38 +136,7 @@ def _flushed_session_ids() -> set[str]:
 def extract_dialogue(transcript: Path) -> tuple[str, str, str]:
     """(dialogue, first_date, last_iso) — every user/assistant text turn in the
     transcript, formatted like the hooks' capture (so chunking splits identically)."""
-    turns: list[str] = []
-    first_ts = last_ts = None
-    with open(transcript, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            msg = entry.get("message", {})
-            role = msg.get("role", "") if isinstance(msg, dict) else entry.get("role", "")
-            content = msg.get("content", "") if isinstance(msg, dict) else entry.get("content", "")
-            if role not in ("user", "assistant"):
-                continue
-            if isinstance(content, list):
-                content = "\n".join(
-                    b.get("text", "") if isinstance(b, dict) and b.get("type") == "text"
-                    else (b if isinstance(b, str) else "")
-                    for b in content
-                )
-            if not (isinstance(content, str) and content.strip()):
-                continue
-            ts = entry.get("timestamp")
-            if isinstance(ts, str) and ts:
-                first_ts = first_ts or ts
-                last_ts = ts
-            label = "User" if role == "user" else "Assistant"
-            turns.append(f"**{label}:** {content.strip()}\n")
-    first_date = (first_ts or "")[:10]
-    return "\n".join(turns), first_date, (last_ts or "")
+    return transcript_dialogue(transcript)
 
 
 # First-user-turn fingerprints of the pipeline's OWN internal Agent SDK sessions
@@ -215,10 +208,40 @@ def discover(min_size: int, haiku_max: int, only_session: str | None,
             chunks = len(chunk_dialogue(dialogue))
             out.append({
                 "sid": sid, "path": t, "project": d.name.split("-Code-")[-1],
+                "agent": "Claude Code",
                 "size": size, "dialogue_chars": len(dialogue), "chunks": chunks,
                 "date": date, "last_iso": last_iso,
                 "model": "haiku" if len(dialogue) <= haiku_max else "sonnet",
             })
+    for t in captured_codex_transcripts():
+        sid = transcript_session_id(t)
+        if only_session and not sid.startswith(only_session):
+            continue
+        if sid in flushed and not (force and only_session):
+            continue
+        size = t.stat().st_size
+        if size < min_size:
+            continue
+        meta = transcript_metadata(t)
+        cwd = meta.get("cwd", "")
+        project = Path(cwd).name if isinstance(cwd, str) and cwd else "codex"
+        if time.time() - t.stat().st_mtime < 1800:
+            warm.append({"sid": sid, "project": project,
+                         "size": size,
+                         "age_min": int((time.time() - t.stat().st_mtime) / 60)})
+            continue
+        dialogue, date, last_iso = extract_dialogue(t)
+        if len(dialogue) < min_size // 3 or not date:
+            continue
+        if is_machinery(dialogue):
+            continue
+        chunks = len(chunk_dialogue(dialogue))
+        out.append({
+            "sid": sid, "path": t, "project": project, "agent": "Codex",
+            "size": size, "dialogue_chars": len(dialogue), "chunks": chunks,
+            "date": date, "last_iso": last_iso,
+            "model": "haiku" if len(dialogue) <= haiku_max else "sonnet",
+        })
     out.sort(key=lambda c: c["last_iso"])
     return out, warm
 
@@ -541,12 +564,19 @@ def main() -> None:
 
     total = 0.0
     print(f"{'PLAN' if not args.yes else 'EXECUTING'} — {len(convs)} conversation(s), oldest first:\n")
-    print(f"{'sid':<10} {'date':<11} {'project':<22} {'size':>7} {'chunks':>6} {'model':<7} {'est. $':>7}")
+    print(
+        f"{'sid':<10} {'date':<11} {'agent':<12} {'project':<22} "
+        f"{'size':>7} {'chunks':>6} {'model':<7} {'est. $':>7}"
+    )
     for c in convs:
         d, comp, _parts = estimate(c)
         total += d + comp
-        print(f"{c['sid'][:8]:<10} {c['date']:<11} {c['project'][:21]:<22} "
-              f"{c['size']/1e6:>6.1f}M {c['chunks']:>6} {c['model']:<7} {d+comp:>7.2f}")
+        print(
+            f"{c['sid'][:8]:<10} {c['date']:<11} "
+            f"{c.get('agent', '')[:11]:<12} {c['project'][:21]:<22} "
+            f"{c['size']/1e6:>6.1f}M {c['chunks']:>6} "
+            f"{c['model']:<7} {d+comp:>7.2f}"
+        )
     if skipped:
         print(f"\n⚠ {len(skipped)} conversation(s) exceed --max-chunks={args.max_chunks} and were "
               f"EXCLUDED (raise --max-chunks to include): "
