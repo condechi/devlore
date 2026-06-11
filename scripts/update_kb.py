@@ -71,7 +71,20 @@ def main() -> None:
     else:
         src = DEFAULT_CACHE
         if (src / ".git").exists():
-            subprocess.run(["git", "-C", str(src), "pull", "-q"], capture_output=True)
+            # fetch + hard-reset rather than pull: survives upstream history
+            # rewrites, and a failed refresh is reported instead of silently
+            # updating from a stale cache.
+            f = subprocess.run(["git", "-C", str(src), "fetch", "-q", "origin"],
+                               capture_output=True, text=True)
+            if f.returncode == 0:
+                r = subprocess.run(["git", "-C", str(src), "reset", "-q", "--hard",
+                                    "origin/main"], capture_output=True, text=True)
+                if r.returncode != 0:
+                    sys.exit(f"error: dist cache at {src} is broken — delete it and "
+                             f"re-run: {r.stderr.strip()[:200]}")
+            else:
+                print("  ⚠ could not refresh the dist cache (offline?) — "
+                      "updating from the cached copy")
         else:
             src.parent.mkdir(parents=True, exist_ok=True)
             r = subprocess.run(["git", "clone", "-q", "--depth", "1", REPO, str(src)],
