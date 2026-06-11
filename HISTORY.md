@@ -84,11 +84,22 @@ v0.9.1 through v0.9.8. That work culminated in the `devlore update` command,
 which keeps an installed KB's machinery current without ever touching its
 knowledge, daily logs, markers, or git history.
 
+### 3. The Emancipation
+
+Through v0.9.12 the source of truth still lived *inside* the founding private
+KB — making it the one knowledge base that could not be managed by the very
+CLI it produced. On June 11, 2026 (v0.9.13) the source was extracted into a
+dedicated development repo, seeded from the distribution itself — which by
+then was brand-clean and placeholder-pathed, so the legacy rename pass was
+retired from the build. The founding KB became a normal consumer, updated by
+`devlore update` like every other install.
+
 ## The lineage, in one line
 
 coleam00's claude-memory-compiler (installed May 22, 2026) → heavily adapted
 inside one production repo → renamed wikiLLM → de-hardcoded and made
-bootstrappable → productized and published as **devlore**.
+bootstrappable → productized and published as **devlore** → emancipated from
+its founding repo into a dedicated source repo.
 
 ---
 
