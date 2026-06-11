@@ -49,7 +49,8 @@ PAYLOAD_SCRIPTS = [
     "activity.py", "add_codebase.py", "build_index.py", "capture-config",
     "capture_config.py", "compile.py", "compile.sh", "config.py", "flush.py",
     "ingest_all_context.py", "ingest_doc.py", "init_kb.py", "kb_commit.py",
-    "lint.py", "optin.py", "query.py", "query.sh", "recheck.py", "staleness.py",
+    "lint.py", "optin.py", "query.py", "query.sh", "recheck.py",
+    "remove_codebase.py", "staleness.py",
     "stamp_baseline.py", "statusline-wrapper.sh", "statusline.py", "update_kb.py", "utils.py",
     "verify.py", "verify.sh", "devlore", "devlore.sh",
 ]

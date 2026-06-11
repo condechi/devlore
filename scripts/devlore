@@ -28,6 +28,7 @@ case "$cmd" in
   backfill)   PY ingest_all_context.py "${@:2}" ;;
   docs)       PY ingest_doc.py "${@:2}" && PY compile.py ;;
   recheck)    PY recheck.py "${@:2}" ;;
+  remove)     PY remove_codebase.py "${@:2}" ;;
   update)     PY update_kb.py "${@:2}" ;;
   init)       PY init_kb.py "${@:2}" ;;
   version|--version|-V)
@@ -98,6 +99,9 @@ Day to day
 Trust & upkeep
   devlore verify              hallucination + staleness gates (Tier-1/2)
   devlore recheck             refresh needs-reverification marks after edits
+  devlore remove <codebase>   stop capturing a codebase — knowledge stays; the
+                              code link is kept so existing articles remain
+                              verified (--full disconnects that too)
   devlore update              refresh this KB's machinery from the latest
                               release — knowledge/, daily/, and your config are
                               never touched

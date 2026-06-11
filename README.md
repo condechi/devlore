@@ -91,6 +91,7 @@ Source-code analogy (h/t Karpathy): the daily logs are *source code*, the compil
 | Command | What it does |
 |---|---|
 | `devlore add <codebase>` | Opt a repo in: live capture + backfill past conversations + ingest docs |
+| `devlore remove <codebase>` | Stop capturing a repo — knowledge stays; `--full` also drops the verify/staleness code link |
 | `devlore ask "…"` | Cited answer from the KB (`--dev` adds live file:line pointers, `--file-back` saves the Q&A) |
 | `devlore compile` | Compile pending daily logs into articles |
 | `devlore verify` | Run the hallucination + staleness gates |
