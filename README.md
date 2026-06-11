@@ -2,7 +2,7 @@
 
 # 📜 devlore
 
-**Every codebase has lore — the decisions, the dead ends, the hard-won lessons.<br>Yours is locked inside your Claude Code conversations. devlore sets it free.**
+**Every codebase has lore — the decisions, the dead ends, the hard-won lessons.<br>Yours is locked inside your Claude Code and Codex conversations. devlore sets it free.**
 
 *Every session you run contains architectural decisions, debugging journeys, and hard-won
 lessons — and today it all evaporates into compacted context and 30-day-old transcripts.
@@ -25,18 +25,18 @@ curl -fsSL https://raw.githubusercontent.com/condechi/devlore/main/install.sh | 
 
 That's it. You now have a knowledge base at `~/devlore` and a `devlore` command.
 
-<sub>Needs: [Claude Code](https://claude.com/claude-code) (logged in), [uv](https://docs.astral.sh/uv/), git. macOS/Linux.</sub>
+<sub>Needs: [Claude Code](https://claude.com/claude-code) (logged in, used for compile/query), [uv](https://docs.astral.sh/uv/), git. Optional: [Codex](https://developers.openai.com/codex) for Codex conversation capture. macOS/Linux.</sub>
 
 ## The magic moment — 60 seconds
 
 ```bash
-cd ~/code/my-project        # any repo you've been working on with Claude Code
+cd ~/code/my-project        # any repo you've been working on with Claude Code or Codex
 devlore add .
 ```
 
 devlore will:
 
-1. **Wire live capture** — every future Claude Code session in this repo flows into the KB automatically (hooks, zero effort).
+1. **Wire live capture** — every future Claude Code or Codex session in this repo flows into the KB automatically (hooks, zero effort).
 2. **Find your past conversations** for this repo and show you a plan **with a cost estimate** — say yes and it distills *months of existing sessions* into wiki articles. Instant value from data you already have.
 3. **Offer the repo's markdown docs** for ingestion too.
 4. **Brief you** on what it learned.
@@ -69,7 +69,7 @@ Answers come back **cited** — every claim links to the articles (and the daily
 ## How it works
 
 ```
- Claude Code sessions          daily/               knowledge/
+ Claude Code / Codex sessions  daily/               knowledge/
 ┌─────────────────────┐  ┌────────────────┐  ┌─────────────────────────┐
 │ you, working        │  │ immutable      │  │ concepts/  connections/ │
 │ normally            ├─►│ conversation   ├─►│ qa/  mocs/  index.md    │
@@ -95,7 +95,7 @@ Source-code analogy (h/t Karpathy): the daily logs are *source code*, the compil
 | `devlore ask "…"` | Cited answer from the KB (`--dev` adds live file:line pointers, `--file-back` saves the Q&A) |
 | `devlore compile` | Compile pending daily logs into articles |
 | `devlore verify` | Run the hallucination + staleness gates |
-| `devlore backfill` | Batch-ingest past conversations (dry-run + cost gate first) |
+| `devlore backfill` | Batch-ingest past Claude Code and Codex conversations (dry-run + cost gate first) |
 | `devlore docs <path>` | Ingest markdown docs, then compile (a dir scans root + first-level subdirs, git-aware + vendor-filtered; `--full-recursive` for the whole tree — compiling costs real money, review the preview) |
 | `devlore status` | What the KB holds: articles, dailies, captured sessions, capture roots, spend |
 | `devlore update` | Refresh the KB's machinery from the latest release (your knowledge is never touched) |

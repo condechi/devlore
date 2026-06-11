@@ -71,7 +71,7 @@ case "$cmd" in
 devlore v$VER — your AI conversations, compiled into a self-checking knowledge base
 KB: $KB
 
-The loop: every Claude Code session in an opted-in codebase is captured into
+The loop: every Claude Code or Codex session in an opted-in codebase is captured into
 daily/ logs; \`compile\` distills them into wiki articles under knowledge/; the
 article index is injected into each new session, so your assistant starts
 already knowing your project's lore.

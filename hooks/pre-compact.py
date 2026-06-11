@@ -1,7 +1,7 @@
 """
 PreCompact hook - captures conversation transcript before auto-compaction.
 
-When Claude Code's context window fills up, it auto-compacts (summarizes and
+When the agent's context window fills up, it auto-compacts (summarizes and
 discards detail). This hook fires BEFORE that happens, extracting conversation
 context and spawning flush.py to extract knowledge that would otherwise
 be lost to summarization.
@@ -29,6 +29,8 @@ if os.environ.get("CLAUDE_INVOKED_BY"):
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / "scripts"
 STATE_DIR = SCRIPTS_DIR
+sys.path.insert(0, str(SCRIPTS_DIR))
+from transcripts import iter_transcript_turns, parse_iso  # noqa: E402
 
 logging.basicConfig(
     filename=str(SCRIPTS_DIR / "flush.log"),
@@ -41,17 +43,6 @@ _LIMITS = get_limits()       # from scripts/capture-config (editable, no code ch
 MAX_TURNS = _LIMITS["max_turns"]        # fallback tail when no save marker yet
 DELTA_CAP_CHARS = _LIMITS["max_chars"]  # cap on a single captured context
 MIN_TURNS_TO_FLUSH = 5
-
-
-def parse_iso(ts):
-    """Parse a transcript ISO timestamp -> naive local datetime (or None)."""
-    if not ts or not isinstance(ts, str):
-        return None
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().replace(tzinfo=None)
-    except Exception:
-        return None
-
 
 def load_last_ts(session_id: str):
     """The high-water timestamp of this session's last flush (None if never)."""
@@ -72,39 +63,9 @@ def extract_conversation_context(transcript_path: Path, session_id: str) -> tupl
     last_ts = load_last_ts(session_id)
     turns: list[tuple] = []  # (timestamp_or_None, text)
 
-    with open(transcript_path, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            msg = entry.get("message", {})
-            if isinstance(msg, dict):
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-            else:
-                role = entry.get("role", "")
-                content = entry.get("content", "")
-
-            if role not in ("user", "assistant"):
-                continue
-
-            if isinstance(content, list):
-                text_parts = []
-                for block in content:
-                    if isinstance(block, dict) and block.get("type") == "text":
-                        text_parts.append(block.get("text", ""))
-                    elif isinstance(block, str):
-                        text_parts.append(block)
-                content = "\n".join(text_parts)
-
-            if isinstance(content, str) and content.strip():
-                label = "User" if role == "user" else "Assistant"
-                turns.append((parse_iso(entry.get("timestamp")), f"**{label}:** {content.strip()}\n"))
+    for turn in iter_transcript_turns(transcript_path):
+        label = "User" if turn.role == "user" else "Assistant"
+        turns.append((turn.timestamp, f"**{label}:** {turn.text}\n"))
 
     if last_ts is not None:
         # Include turns newer than the last save; a turn with no timestamp is

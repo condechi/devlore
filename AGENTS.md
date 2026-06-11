@@ -443,6 +443,8 @@ Output: a markdown report with severity levels (error, warning, suggestion).
 llm-personal-kb/
 |-- .claude/
 |   |-- settings.json                # Hook configuration (auto-activates in Claude Code)
+|-- .codex/
+|   |-- hooks.json                   # Optional Codex hook configuration in opted-in codebases
 |-- .gitignore                       # Excludes runtime state, temp files, caches
 |-- AGENTS.md                        # This file - schema + full technical reference
 |-- README.md                        # Concise overview + quick start
@@ -461,7 +463,7 @@ llm-personal-kb/
 |   |-- flush.py                     #   Extract memories from conversations (background)
 |   |-- config.py                    #   Path constants
 |   |-- utils.py                     #   Shared helpers
-|-- hooks/                           # Claude Code hooks
+|-- hooks/                           # Claude Code + Codex hooks
 |   |-- session-start.py             #   Injects knowledge into every session
 |   |-- session-end.py               #   Extracts conversation -> daily log
 |   |-- pre-compact.py               #   Safety net: captures context before compaction
@@ -472,7 +474,9 @@ llm-personal-kb/
 
 ## Hook System (Automatic Capture)
 
-Hooks are configured in `.claude/settings.json` and fire automatically when you use Claude Code in this project.
+Hooks are configured in Claude Code's `.claude/settings.local.json` and Codex's
+`.codex/hooks.json` for opted-in codebases. Both flows call the same scripts and
+write the same daily logs.
 
 ### `.claude/settings.json` Format
 
@@ -488,6 +492,20 @@ Hooks are configured in `.claude/settings.json` and fire automatically when you 
 
 Commands use simple relative paths from the project root. Empty `matcher` catches all events.
 
+### `.codex/hooks.json` Format
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "uv run --directory <kb> python hooks/session-start.py", "timeout": 15 }] }],
+    "PreCompact": [{ "matcher": "manual|auto", "hooks": [{ "type": "command", "command": "uv run --directory <kb> python hooks/pre-compact.py", "timeout": 10 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "uv run --directory <kb> python hooks/session-end.py", "timeout": 10 }] }]
+  }
+}
+```
+
+Codex requires project-local hooks to be trusted before they run.
+
 ### Hook Details
 
 **`session-start.py`** (SessionStart)
@@ -497,7 +515,7 @@ Commands use simple relative paths from the project root. Empty `matcher` catche
 - Claude sees the knowledge base index at the start of every session
 - Max context: 20,000 characters
 
-**`session-end.py`** (SessionEnd)
+**`session-end.py`** (Claude SessionEnd / Codex Stop)
 - Reads hook input from stdin (JSON with `session_id`, `transcript_path`, `cwd`)
 - Copies the raw JSONL transcript to a temp file (no parsing in the hook - keeps it fast)
 - Spawns `flush.py` as a fully detached background process
@@ -531,7 +549,8 @@ This ensures flush.py survives after Claude Code's hook process exits.
 
 ### JSONL Transcript Format
 
-Claude Code stores conversations as `.jsonl` files. Messages are nested under a `message` key:
+Claude Code stores conversations as `.jsonl` files with messages nested under a
+`message` key:
 
 ```python
 entry = json.loads(line)
@@ -541,6 +560,11 @@ content = msg.get("content", "")  # string or list of content blocks
 ```
 
 Content can be a string or a list of blocks (`{"type": "text", "text": "..."}` dicts).
+
+Codex stores session transcripts under `$CODEX_HOME/sessions` (default:
+`~/.codex/sessions`) as JSONL. User/assistant turns are `response_item` entries
+whose payload is a `message` with `input_text`/`output_text` content blocks. The
+shared `scripts/transcripts.py` parser normalizes both formats.
 
 ---
 

@@ -3,7 +3,7 @@
 `devlore add` wires two INDEPENDENT links, and the removal modes map onto them:
 
   capture link   capture-roots entry + hooks in the codebase's
-                 .claude/settings.local.json. NEW conversations flow into the
+                 .claude/settings.local.json and .codex/hooks.json. NEW conversations flow into the
                  KB through this. Always removed by this command — the
                  confidential-work case needs nothing more.
   code link      symlink + code-roots entry. verify/staleness keep checking
@@ -31,7 +31,8 @@ from pathlib import Path
 
 KB = Path(__file__).resolve().parent.parent
 SCRIPTS = KB / "scripts"
-HOOK_EVENTS = ("SessionStart", "PreCompact", "SessionEnd")
+CLAUDE_HOOK_EVENTS = ("SessionStart", "PreCompact", "SessionEnd")
+CODEX_HOOK_EVENTS = ("SessionStart", "PreCompact", "Stop")
 
 
 def _ask(prompt: str, default_yes: bool = True, assume: bool | None = None) -> bool:
@@ -57,24 +58,19 @@ def _strip_lines(file: Path, wanted: set[str]) -> int:
     return removed
 
 
-def unwire_capture(codebase: Path) -> None:
-    """Remove the capture link: capture-roots entry + our hooks in the codebase."""
-    n = _strip_lines(SCRIPTS / "capture-roots", {f"{codebase}/", str(codebase)})
-    print(f"  {'✓ capture opt-out (capture-roots)' if n else '· not in capture-roots'}")
-
-    sl = codebase / ".claude" / "settings.local.json"
-    if not sl.exists():
-        print("  · no settings.local.json in the codebase (no hooks to remove)")
+def _unwire_hook_file(settings_path: Path, events: tuple[str, ...], label: str) -> None:
+    if not settings_path.exists():
+        print(f"  · no {label} hook config in the codebase (no hooks to remove)")
         return
     try:
-        settings = json.loads(sl.read_text(encoding="utf-8"))
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
-        print(f"  ⚠ {sl} unreadable — remove the KB hooks manually")
+        print(f"  ⚠ {settings_path} unreadable — remove the KB hooks manually")
         return
     ours = f"uv run --directory {KB} "
     hooks = settings.get("hooks", {})
     removed = []
-    for ev in HOOK_EVENTS:
+    for ev in events:
         groups = hooks.get(ev, [])
         for g in groups:
             before = len(g.get("hooks", []))
@@ -88,11 +84,20 @@ def unwire_capture(codebase: Path) -> None:
     if not hooks:
         settings.pop("hooks", None)
     if removed:
-        sl.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-        print(f"  ✓ hooks removed from {codebase.name}/.claude/settings.local.json: "
-              + ", ".join(removed))
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        print(f"  ✓ {label} hooks removed: " + ", ".join(removed))
     else:
-        print("  · no hooks of this KB in the codebase")
+        print(f"  · no {label} hooks of this KB in the codebase")
+
+
+def unwire_capture(codebase: Path) -> None:
+    """Remove the capture link: capture-roots entry + our hooks in the codebase."""
+    n = _strip_lines(SCRIPTS / "capture-roots", {f"{codebase}/", str(codebase)})
+    print(f"  {'✓ capture opt-out (capture-roots)' if n else '· not in capture-roots'}")
+    _unwire_hook_file(codebase / ".claude" / "settings.local.json",
+                      CLAUDE_HOOK_EVENTS, "Claude Code")
+    _unwire_hook_file(codebase / ".codex" / "hooks.json",
+                      CODEX_HOOK_EVENTS, "Codex")
 
 
 def unwire_code(codebase: Path) -> None:
