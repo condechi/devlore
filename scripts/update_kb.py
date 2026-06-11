@@ -29,7 +29,11 @@ from pathlib import Path
 
 DEFAULT_CACHE = Path.home() / ".devlore" / "dist"
 REPO = "https://github.com/condechi/devlore.git"
-PLACEHOLDER = "__DEVLORE_HOME__"
+# Split literal: this file is itself materialized by the very rewrite that
+# resolves the placeholder — an intact literal here would be rewritten to the
+# KB path, corrupting the constant and leaving placeholders unresolved on the
+# NEXT update (same in-band-sentinel class as the flush FLUSH_OK bug).
+PLACEHOLDER = "__DEVLORE" + "_HOME__"
 
 # Machinery surfaces re-materialized from the dist. scripts/ and hooks/ copy
 # every file the DIST ships (the dist contains only machinery), so KB-local

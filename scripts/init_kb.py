@@ -71,10 +71,13 @@ def _assert_path_safe(p: Path, label: str = "path") -> None:
 
 def _rewrite(text: str, target: Path) -> str:
     """Point every reference to the template KB at the new KB instead. Also resolves
-    the distribution placeholder (`__DEVLORE_HOME__`) written by build_dist.py, so a
-    cloned distribution works no matter where it was cloned."""
+    the distribution home placeholder written by build_dist.py, so a cloned
+    distribution works no matter where it was cloned. The placeholder literal is
+    split below because this file is itself materialized through this rewrite —
+    an intact literal would be resolved to the KB path, corrupting the installed
+    copy's ability to resolve future placeholders."""
     return (text.replace(str(SOURCE_ROOT), str(target))
-                .replace("__DEVLORE_HOME__", str(target)))
+                .replace("__DEVLORE" + "_HOME__", str(target)))
 
 
 def _copy(src: Path, dst: Path, target: Path, dry: bool) -> None:
