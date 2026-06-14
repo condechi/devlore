@@ -89,6 +89,130 @@ def quote_unsafe_frontmatter(article_paths) -> int:
     return fixed
 
 
+# ── Frontmatter tags (Obsidian) ───────────────────────────────────────
+
+# Obsidian-legal tag characters: letters, digits, '-', '_', and '/' for nesting.
+TAG_UNSAFE = re.compile(r"[^a-z0-9_/-]+")
+
+_TAGS_INLINE = re.compile(r"^tags:\s*\[(.*)\]\s*$")
+_TAGS_BARE = re.compile(r"^tags:\s*([^\[\s#].*)$")
+_TAGS_KEY = re.compile(r"^tags:\s*(#.*)?$")
+_LIST_ITEM = re.compile(r"^\s+-\s*(.+?)\s*$")
+_FM_PROJECT = re.compile(r"^project:\s*(.+?)\s*$")
+
+
+def normalize_tag(tag: str) -> str:
+    """Lowercase-kebab an Obsidian tag, preserving '/' nesting. '' if nothing survives."""
+    t = tag.strip().strip("\"'").lstrip("#").lower().replace(" ", "-")
+    t = re.sub(r"-{2,}", "-", TAG_UNSAFE.sub("-", t))
+    return "/".join(s for s in (seg.strip("-") for seg in t.split("/")) if s)
+
+
+def _fm_lines(text: str) -> tuple[list[str], int] | tuple[None, None]:
+    """(frontmatter lines, end offset of the closing ---) or (None, None)."""
+    if not text.startswith("---"):
+        return None, None
+    end = text.find("\n---", 3)
+    if end == -1:
+        return None, None
+    return text[3:end].split("\n"), end
+
+
+def _find_tags(lines: list[str]) -> tuple[list[str] | None, int | None, int | None]:
+    """Locate the top-level `tags:` key. Returns (items, start, stop) where
+    lines[start:stop] is the tags region — inline `[a, b]`, bare `a, b`, or a
+    block list — or (None, None, None) when the key is absent."""
+    for i, ln in enumerate(lines):
+        m = _TAGS_INLINE.match(ln) or _TAGS_BARE.match(ln)
+        if m:
+            items = [p for p in (s.strip() for s in m.group(1).split(",")) if p]
+            return items, i, i + 1
+        if _TAGS_KEY.match(ln):
+            j, items = i + 1, []
+            while j < len(lines) and (m2 := _LIST_ITEM.match(lines[j])):
+                items.append(m2.group(1))
+                j += 1
+            return items, i, j
+    return None, None, None
+
+
+def read_article_tags(text: str) -> list[str] | None:
+    """The article's frontmatter `tags:` as written (unnormalized), or None when the
+    article has no frontmatter or no tags key."""
+    lines, _end = _fm_lines(text)
+    if lines is None:
+        return None
+    items, start, _stop = _find_tags(lines)
+    return items if start is not None else None
+
+
+def ensure_required_tags(article_paths) -> int:
+    """Deterministically guarantee every article's `tags:` exists as an inline list
+    led by the article's `project:` slug — Obsidian tag filtering and graph maps key
+    off it, so it can't be left to the compiler LLM's discretion. Domain tags after
+    it are normalized to lowercase-kebab and deduped; articles with no `project:`
+    are left alone. Idempotent. Returns the number of files changed."""
+    fixed = 0
+    for p in article_paths:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        lines, end = _fm_lines(text)
+        if lines is None:
+            continue
+        project = normalize_tag(next(
+            (m.group(1) for ln in lines if (m := _FM_PROJECT.match(ln))), ""))
+        if not project:
+            continue
+        existing, start, stop = _find_tags(lines)
+        tags = [project]
+        for t in (normalize_tag(x) for x in existing or []):
+            if t and t not in tags:
+                tags.append(t)
+        new_line = f"tags: [{', '.join(tags)}]"
+        if start is not None:
+            if lines[start:stop] == [new_line]:
+                continue
+            lines[start:stop] = [new_line]
+        else:
+            # Insert after the last header-ish scalar (skipping any block list that
+            # follows it) so the new line can never split an existing block.
+            keys = ("aliases:", "summary:", "milestone:", "subsystem:",
+                    "status:", "type:", "project:", "title:")
+            anchor = max((i for i, ln in enumerate(lines) if ln.startswith(keys)),
+                         default=len(lines) - 1)
+            j = anchor + 1
+            while j < len(lines) and _LIST_ITEM.match(lines[j]):
+                j += 1
+            lines.insert(j, new_line)
+        p.write_text(text[:3] + "\n".join(lines) + text[end:], encoding="utf-8")
+        fixed += 1
+    return fixed
+
+
+def collect_tag_vocabulary(article_paths) -> dict[str, int]:
+    """{tag: article count} across the wiki, EXCLUDING each article's own project
+    slug (structural, not domain vocabulary). Ordered by count desc, then name —
+    the compiler shows this to the LLM so tags converge instead of sprawling."""
+    counts: dict[str, int] = {}
+    for p in article_paths:
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        lines, _end = _fm_lines(text)
+        if lines is None:
+            continue
+        project = normalize_tag(next(
+            (m.group(1) for ln in lines if (m := _FM_PROJECT.match(ln))), ""))
+        items, _s, _e = _find_tags(lines)
+        for t in {normalize_tag(x) for x in items or []}:
+            if t and t != project:
+                counts[t] = counts.get(t, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
 # ── Markdown doc collection (devlore add / devlore docs) ─────────────
 
 # Path segments that mark vendored or generated trees — excluded at ANY depth,

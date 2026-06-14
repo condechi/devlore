@@ -40,6 +40,7 @@ from config import (
     system_cli_path,
 )
 from utils import (
+    collect_tag_vocabulary,
     file_hash,
     list_raw_files,
     list_wiki_articles,
@@ -204,6 +205,9 @@ async def compile_daily_log(log_path: Path, state: dict, *, file_index: int = 1,
         # Re-read the wiki each part so later parts see earlier parts' new articles.
         wiki_index = read_wiki_index()
         existing_articles_context = _existing_articles_context()
+        tag_vocab = collect_tag_vocabulary(list_wiki_articles())
+        tag_vocab_line = ", ".join(
+            f"`{t}` ({n})" for t, n in list(tag_vocab.items())[:60]) or "(none yet)"
         timestamp = now_iso()
         part_note = "" if len(chunks) == 1 else (
             f"\n\n**This is PART {ci} of {len(chunks)}** of today's daily log, split for size at "
@@ -221,6 +225,10 @@ and extract knowledge into structured wiki articles.
 ## Current Wiki Index
 
 {wiki_index}
+
+## Established Tag Vocabulary (tag → article count)
+
+{tag_vocab_line}
 
 ## Existing Wiki Articles
 
@@ -251,6 +259,14 @@ Read the daily log above and compile it into wiki articles following the schema 
    - Set `subsystem:` to the architecture area — REUSE an existing subsystem slug (look
      at the `subsystem:` field of related articles above); only add a new one for a
      genuinely new area (it becomes a new index section).
+   - Set `tags:` — an inline list whose FIRST entry is the article's `project:` slug,
+     followed by 2-5 lowercase-kebab domain tags chosen to make Obsidian tag filtering
+     and graph maps useful during development (the mechanism, the technique, the risk
+     area). REUSE the Established Tag Vocabulary above wherever a tag fits; coin a new
+     tag only when it will plausibly group 2+ articles. Never add a near-synonym of an
+     existing tag, and don't duplicate the `subsystem:` value as a tag (it is already
+     a filterable field). When you UPDATE an article, re-check its tags by these rules.
+     This applies to connection/qa articles too, not just concepts.
    - Write a one-line `summary:` — this is the catalog text the index will show for this
      article (the index is generated from it). Keep it current when you update the article.
      The `summary:` value MUST be wrapped in double quotes (summaries routinely contain
@@ -524,6 +540,18 @@ def main():
             print(f"  YAML guard: quoted unsafe frontmatter in {nq} article(s).")
     except Exception as e:
         print(f"  (YAML guard skipped: {e})")
+
+    # Tag guard: deterministically guarantee every article's `tags:` is an inline
+    # lowercase-kebab list led by its `project:` slug (Obsidian tag filtering and
+    # graph maps key off it — too load-bearing to leave to the compiler LLM).
+    # Idempotent; runs over ALL articles so pre-feature articles self-heal too.
+    try:
+        from utils import ensure_required_tags
+        ntg = ensure_required_tags(_article_paths())
+        if ntg:
+            print(f"  Tag guard: normalized tags in {ntg} article(s).")
+    except Exception as e:
+        print(f"  (tag guard skipped: {e})")
 
     # PR D: born-stamp new/updated articles with valid_as_of + code_baseline so the
     # Tier-2 staleness scan (scripts/staleness.py) stays precise. Deterministic; only

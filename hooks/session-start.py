@@ -1,11 +1,11 @@
 """
 SessionStart hook - injects knowledge base context into every conversation.
 
-This is the "context injection" layer. When Claude Code starts a session,
+This is the "context injection" layer. When Claude Code or Codex starts a session,
 this hook reads the knowledge base index and recent daily log, then injects
 them as additional context so Claude always "remembers" what it has learned.
 
-Configure in .claude/settings.json:
+Configure in .claude/settings.local.json or .codex/hooks.json:
 {
     "hooks": {
         "SessionStart": [{

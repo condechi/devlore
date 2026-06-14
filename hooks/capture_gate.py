@@ -2,6 +2,8 @@
 
 A session is captured only if its working directory is listed in
 scripts/capture-roots (exact match, or subtree if the line ends with "/").
+Claude Code worktree sessions (<project>/.claude/worktrees/<name>) are judged
+as the project directory they are a worktree of — see resolve_worktree().
 This keeps capture decoupled from arbitrary project code: opting a directory
 in/out is a one-line edit to that central file, no per-repo flag files.
 
@@ -23,11 +25,31 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from capture_config import get_limits  # noqa: E402
 
 
+def resolve_worktree(cwd: str) -> str:
+    """Collapse a Claude Code worktree path onto the directory it is a worktree OF.
+
+    Worktrees live at <project>/.claude/worktrees/<name>; a session there is
+    working ON <project>, so capture, recall injection, and the status line must
+    judge it as if cwd were <project> — otherwise an exact-mode capture root
+    silently skips every worktree session (and its knowledge is lost unless the
+    transcript survives until a manual backfill).
+
+        <project>/.claude/worktrees/<name>[/sub] → <project>[/sub]
+    """
+    parts = Path(os.path.normpath(cwd)).parts
+    for i in range(len(parts) - 2):
+        if parts[i] == ".claude" and parts[i + 1] == "worktrees":
+            head = Path(*parts[:i])
+            rest = parts[i + 3:]
+            return str(head.joinpath(*rest)) if rest else str(head)
+    return os.path.normpath(cwd)
+
+
 def should_capture(cwd: str) -> bool:
     """True iff `cwd` matches an entry in scripts/capture-roots."""
     if not cwd:
         return False
-    cwd = os.path.normpath(cwd)
+    cwd = resolve_worktree(cwd)
     try:
         lines = CAPTURE_ROOTS_FILE.read_text(encoding="utf-8").splitlines()
     except OSError:

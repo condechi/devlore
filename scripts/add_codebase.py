@@ -1,7 +1,7 @@
 """devlore add — opt a codebase into this knowledge base.
 
 The product's magic moment: point it at any repo you've been working on with
-Claude Code and it (1) wires live capture for every future session, (2) finds
+Claude Code or Codex and it (1) wires live capture for every future session, (2) finds
 your PAST conversations for that codebase and offers to distill them into the
 wiki (cost-gated batch backfill), (3) offers to ingest the repo's markdown docs,
 then (4) briefs you on the knowledge that came out.
@@ -74,13 +74,13 @@ def wire(codebase: Path) -> str:
     if _append_line(SCRIPTS / "code-roots", name):
         print("  ✓ code root registered (staleness + symbol verification will scan it)")
     note = merge_codebase_hooks(codebase, KB, dry=False)
-    print(f"  ✓ Claude Code hooks in {codebase.name}/.claude/settings.local.json: {note}")
+    print(f"  ✓ capture hooks for Claude Code + Codex in {codebase.name}: {note}")
     return name
 
 
 def backfill(assume_yes: bool) -> None:
     """Discover past conversations (all captured roots) and offer the gated backfill."""
-    print("\nLooking for PAST Claude Code conversations to distill…")
+    print("\nLooking for PAST Claude Code and Codex conversations to distill…")
     plan = subprocess.run(
         [sys.executable, str(SCRIPTS / "ingest_all_context.py")],
         capture_output=True, text=True, cwd=str(KB))
@@ -159,7 +159,7 @@ def briefing(before_count: int) -> None:
 Try it:
   devlore ask "What are the key decisions in this project?"
 
-From here, it compounds on its own: every Claude Code session you run inside
+From here, it compounds on its own: every Claude Code or Codex session you run inside
 the codebase is captured and compiled automatically.
 
 Optional: open  {KB}  as an Obsidian vault for the rendered
@@ -167,7 +167,7 @@ experience (graph view, clickable wikilinks, the devlore side panel).""")
     else:
         print("""
 The knowledge base is wired but still empty — live capture is on for every
-future Claude Code session in this codebase. To seed it now:
+future Claude Code or Codex session in this codebase. To seed it now:
   devlore backfill            # retry past conversations
   devlore docs <file-or-dir>  # ingest existing markdown docs""")
 
@@ -183,11 +183,19 @@ def main() -> None:
                          "first-level dirs. The git/deny-list/tripwire filters still "
                          "apply, but review the preview — every accepted file is "
                          "compiled at real LLM cost.")
+    ap.add_argument("--kb", help="Operate on this KB instead of resolving the owner "
+                                 "(bare `devlore` on PATH routes to the owning KB).")
     args = ap.parse_args()
 
     codebase = Path(args.codebase).expanduser().resolve()
     if not codebase.is_dir():
         sys.exit(f"error: not a directory: {codebase}")
+
+    from kb_resolve import resolve_or_redispatch
+    fwd = [f for f, on in [("--yes", args.yes), ("--no-backfill", args.no_backfill),
+                           ("--no-docs", args.no_docs), ("--full-recursive", args.full_recursive)] if on]
+    resolve_or_redispatch("add", codebase, KB, fwd, args.kb, require_owner=True)
+
     if str(codebase) == "/" or not str(codebase).startswith(str(Path.home())):
         sys.exit(f"error: codebase must be inside your home directory: {codebase}")
     if codebase == KB or str(codebase).startswith(str(KB) + "/"):

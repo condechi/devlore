@@ -94,12 +94,26 @@ then was brand-clean and placeholder-pathed, so the legacy rename pass was
 retired from the build. The founding KB became a normal consumer, updated by
 `devlore update` like every other install.
 
+### 4. Beyond Claude Code: Codex, tags, and worktrees
+
+With development now in its own repo, v0.9.14 landed the first wave of
+post-Emancipation features in a single release. devlore stopped being
+Claude-Code-only: a shared transcript normalizer (`scripts/transcripts.py`)
+lets it capture **Codex** sessions too, wiring `.codex/hooks.json` alongside
+Claude Code's hooks and discovering past Codex transcripts for backfill (the
+Agent SDK still does the compile/query work). Alongside it shipped
+project-slug-first **frontmatter tags** for Obsidian, **git-worktree capture**
+(sessions in `.claude/worktrees/` now map to their project for capture,
+recall, and backfill), and **owning-KB routing** so a bare `devlore add` finds
+the right knowledge base when several are installed.
+
 ## The lineage, in one line
 
 coleam00's claude-memory-compiler (installed May 22, 2026) → heavily adapted
 inside one production repo → renamed wikiLLM → de-hardcoded and made
 bootstrappable → productized and published as **devlore** → emancipated from
-its founding repo into a dedicated source repo.
+its founding repo into a dedicated source repo → opened up to Codex alongside
+Claude Code.
 
 ---
 

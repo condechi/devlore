@@ -1,9 +1,10 @@
 """
 Lint the knowledge base for structural and semantic health.
 
-Runs 8 checks: broken links, orphan pages, orphan sources, stale articles,
+Runs 9 checks: broken links, orphan pages, orphan sources, stale articles,
 missing backlinks, sparse articles, frontmatter schema (PR C type/status/subsystem/
-summary), and contradictions (LLM).
+summary), tags hygiene (project slug first + vocabulary sprawl), and
+contradictions (LLM).
 
 Usage:
     uv run python lint.py                    # all checks
@@ -212,6 +213,55 @@ def check_frontmatter_schema() -> list[dict]:
     return issues
 
 
+def check_tags() -> list[dict]:
+    """Tags hygiene: every article carries `tags:` led by its `project:` slug, every
+    tag lowercase-kebab (the compile tag guard auto-fixes all three), plus one
+    aggregate suggestion when singleton tags accumulate (vocabulary sprawl defeats
+    Obsidian filtering — tags only pay off when they group articles)."""
+    from utils import collect_tag_vocabulary, normalize_tag, read_article_tags
+
+    issues = []
+    for article in list_wiki_articles():
+        rel = str(article.relative_to(KNOWLEDGE_DIR))
+        text = article.read_text(encoding="utf-8")
+        project = normalize_tag(_frontmatter_scalar(text, "project") or "")
+        tags = read_article_tags(text)
+        if not tags:
+            issues.append({
+                "severity": "warning", "check": "tags", "file": rel,
+                "detail": "Missing `tags:` — every article must carry at least its "
+                          "project slug tag",
+                "auto_fixable": True,
+            })
+            continue
+        norm = [normalize_tag(t) for t in tags]
+        if project and norm[0] != project:
+            issues.append({
+                "severity": "warning", "check": "tags", "file": rel,
+                "detail": f"First tag must be the project slug `{project}` "
+                          f"(got `{tags[0]}`)",
+                "auto_fixable": True,
+            })
+        bad = [raw for raw, n in zip(tags, norm) if raw.strip().strip("\"'") != n]
+        if bad:
+            issues.append({
+                "severity": "warning", "check": "tags", "file": rel,
+                "detail": "Malformed tag(s) (must be lowercase-kebab): "
+                          + ", ".join(f"`{t}`" for t in bad),
+                "auto_fixable": True,
+            })
+    singles = sorted(t for t, n in collect_tag_vocabulary(list_wiki_articles()).items()
+                     if n == 1)
+    if len(singles) >= 3:
+        shown = ", ".join(singles[:15]) + ("…" if len(singles) > 15 else "")
+        issues.append({
+            "severity": "suggestion", "check": "tags", "file": "(cross-article)",
+            "detail": f"Tag vocabulary sprawl: {len(singles)} tag(s) each used by "
+                      f"only one article — consider consolidating: {shown}",
+        })
+    return issues
+
+
 async def check_contradictions() -> list[dict]:
     """Use LLM to detect contradictions across articles."""
     from claude_agent_sdk import (
@@ -335,6 +385,7 @@ def main():
         ("Missing backlinks", check_missing_backlinks),
         ("Sparse articles", check_sparse_articles),
         ("Frontmatter schema", check_frontmatter_schema),
+        ("Tags hygiene", check_tags),
     ]
 
     for name, check_fn in checks:

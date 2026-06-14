@@ -5,7 +5,15 @@ set -uo pipefail
 
 # Resolve symlinks so KB is the real KB root even when devlore is invoked through
 # a symlink on PATH (install.sh links ~/.local/bin/devlore → <KB>/scripts/devlore).
+# The bare PATH symlink is the one AMBIGUOUS way in: mark it so add/remove can
+# route to the owning KB (kb_resolve.py). A full-path launcher means "this KB",
+# so the marker is explicitly cleared (it may linger in the environment).
 src="${BASH_SOURCE[0]:-$0}"
+if [ -h "$src" ]; then
+  export DEVLORE_VIA_PATH_SYMLINK=1
+else
+  unset DEVLORE_VIA_PATH_SYMLINK
+fi
 while [ -h "$src" ]; do
   dir="$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
   src="$(readlink "$src")"
@@ -71,7 +79,7 @@ case "$cmd" in
 devlore v$VER — your AI conversations, compiled into a self-checking knowledge base
 KB: $KB
 
-The loop: every Claude Code session in an opted-in codebase is captured into
+The loop: every Claude Code or Codex session in an opted-in codebase is captured into
 daily/ logs; \`compile\` distills them into wiki articles under knowledge/; the
 article index is injected into each new session, so your assistant starts
 already knowing your project's lore.
@@ -110,6 +118,11 @@ Trust & upkeep
 Elsewhere
   devlore init <dir> [...]    bootstrap ANOTHER knowledge base in a new
                               directory (each KB is independent)
+
+Multiple KBs: the bare \`devlore\` on PATH routes add/remove to the KB that
+OWNS the path (most-specific match across ~/.claude/kb-dirs; it asks when
+ambiguous, --kb <kb-path> overrides). A launcher invoked by full path
+(<kb>/scripts/devlore …) always operates on its own KB.
 
 Safe by default: backfill and compile show the plan and the bill before
 spending anything, and update never touches what makes the KB yours.

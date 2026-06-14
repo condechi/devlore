@@ -125,6 +125,7 @@ After writing the answer, persist it so future queries compound on it:
    question: "{question}"
    project: {project_cell}
    type: qa
+   tags: [<this article's project slug FIRST>, <2-3 lowercase-kebab domain tags reused from the consulted articles>]
    consulted:
      - "concepts/<each-article-you-actually-read>"
    created: {timestamp[:10]}

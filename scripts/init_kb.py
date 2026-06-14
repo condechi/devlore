@@ -1,7 +1,7 @@
 """devlore init — bootstrap a NET-NEW knowledge base for another project.
 
 Creates a self-sufficient KB directory from THIS repo's machinery (the committed
-state is the template), wires Claude Code capture for the target codebase, and
+state is the template), wires Claude Code/Codex capture for the target codebase, and
 git-inits with the standard commit strategy. **Obsidian is optional**: the core
 install has zero Obsidian artifacts; `--with-obsidian` additionally drops in the
 devlore plugin + vault config for users who open the KB directory as a vault.
@@ -14,14 +14,14 @@ What it does, in order:
   3. symlink each codebase into the KB dir; write scripts/capture-roots
      (subtree mode) + scripts/code-roots; fresh capture-config
   4. register the capture hooks in each CODEBASE's .claude/settings.local.json
-     (merge-aware — never clobbers existing settings)
+     and .codex/hooks.json (merge-aware — never clobbers existing settings)
   5. skeleton knowledge/{concepts,connections,qa,mocs}/ + daily/ + generated
      empty index.md + log.md header
   6. `uv sync` the venv; git init + initial commit (local-only strategy)
-  7. append the KB to ~/.claude/kb-dirs (shared status-line dispatcher)
+  7. append the KB to ~/.claude/kb-dirs (shared Claude status-line dispatcher)
   8. [--with-obsidian] copy .obsidian/plugins/devlore + app.json ignore filters
 
-After init: start Claude Code sessions in the codebase (capture is live),
+After init: start Claude Code or Codex sessions in the codebase (capture is live),
 `/devlore <docs>` to ingest existing documentation, and
 `scripts/ingest_all_context.py` to backfill any surviving past conversations.
 
@@ -49,15 +49,16 @@ PAYLOAD_SCRIPTS = [
     "activity.py", "add_codebase.py", "build_index.py", "capture-config",
     "capture_config.py", "compile.py", "compile.sh", "config.py", "flush.py",
     "ingest_all_context.py", "ingest_doc.py", "init_kb.py", "kb_commit.py",
-    "lint.py", "optin.py", "query.py", "query.sh", "recheck.py",
+    "kb_resolve.py", "lint.py", "optin.py", "query.py", "query.sh", "recheck.py",
     "remove_codebase.py", "staleness.py",
-    "stamp_baseline.py", "statusline-wrapper.sh", "statusline.py", "update_kb.py", "utils.py",
-    "verify.py", "verify.sh", "devlore", "devlore.sh",
+    "stamp_baseline.py", "statusline-wrapper.sh", "statusline.py", "transcripts.py",
+    "update_kb.py", "utils.py", "verify.py", "verify.sh", "devlore", "devlore.sh",
 ]
 PAYLOAD_HOOKS = ["capture_gate.py", "pre-compact.py", "session-end.py", "session-start.py"]
 PAYLOAD_ROOT = ["AGENTS.md", "pyproject.toml", "uv.lock", ".gitignore"]
 PAYLOAD_CLAUDE = ["settings.json"]  # + commands/ tree
-HOOK_EVENTS = ("SessionStart", "PreCompact", "SessionEnd")
+CLAUDE_HOOK_EVENTS = ("SessionStart", "PreCompact", "SessionEnd")
+CODEX_HOOK_EVENTS = ("SessionStart", "PreCompact", "Stop")
 
 
 _SHELL_SAFE = re.compile(r'^[A-Za-z0-9_\-/.~ ]+$')
@@ -112,36 +113,84 @@ def link_name(kb: Path, codebase: Path) -> str:
     return name
 
 
-def merge_codebase_hooks(codebase: Path, kb: Path, dry: bool) -> str:
-    """Register the KB's capture hooks in the codebase's .claude/settings.local.json,
-    merging with whatever is already there (existing hooks for the same events are
-    kept; ours are appended only if not already present)."""
-    sl = codebase / ".claude" / "settings.local.json"
+def _merge_hook_file(
+    settings_path: Path,
+    kb: Path,
+    dry: bool,
+    events: tuple[str, ...],
+    scripts: dict[str, str],
+    timeouts: dict[str, int],
+    matchers: dict[str, str | None],
+    status_messages: dict[str, str] | None = None,
+) -> str:
     settings: dict = {}
-    if sl.exists():
+    if settings_path.exists():
         try:
-            settings = json.loads(sl.read_text(encoding="utf-8"))
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            return f"⚠ {sl} unreadable — hooks NOT registered (register manually)"
+            return f"⚠ {settings_path} unreadable — hooks NOT registered (register manually)"
     hooks = settings.setdefault("hooks", {})
-    timeouts = {"SessionStart": 15, "PreCompact": 10, "SessionEnd": 10}
-    script = {"SessionStart": "session-start.py", "PreCompact": "pre-compact.py",
-              "SessionEnd": "session-end.py"}
     added = []
-    for ev in HOOK_EVENTS:
-        cmd = f"uv run --directory {kb} python hooks/{script[ev]}"
+    for ev in events:
+        cmd = f"uv run --directory {kb} python hooks/{scripts[ev]}"
         groups = hooks.setdefault(ev, [])
         already = any(h.get("command") == cmd
                       for g in groups for h in g.get("hooks", []))
         if already:
             continue
-        groups.append({"matcher": "", "hooks": [
-            {"type": "command", "command": cmd, "timeout": timeouts[ev]}]})
+        handler = {"type": "command", "command": cmd, "timeout": timeouts[ev]}
+        if status_messages and ev in status_messages:
+            handler["statusMessage"] = status_messages[ev]
+        group = {"hooks": [handler]}
+        matcher = matchers.get(ev)
+        if matcher is not None:
+            group["matcher"] = matcher
+        groups.append(group)
         added.append(ev)
     if not dry and added:
-        sl.parent.mkdir(parents=True, exist_ok=True)
-        sl.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return f"registered {', '.join(added)}" if added else "already registered"
+
+
+def merge_claude_hooks(codebase: Path, kb: Path, dry: bool) -> str:
+    """Register capture hooks in Claude Code settings.local.json."""
+    return _merge_hook_file(
+        codebase / ".claude" / "settings.local.json",
+        kb,
+        dry,
+        CLAUDE_HOOK_EVENTS,
+        {"SessionStart": "session-start.py", "PreCompact": "pre-compact.py",
+         "SessionEnd": "session-end.py"},
+        {"SessionStart": 15, "PreCompact": 10, "SessionEnd": 10},
+        {"SessionStart": "", "PreCompact": "", "SessionEnd": ""},
+    )
+
+
+def merge_codex_hooks(codebase: Path, kb: Path, dry: bool) -> str:
+    """Register capture hooks in Codex's project-local hooks.json."""
+    return _merge_hook_file(
+        codebase / ".codex" / "hooks.json",
+        kb,
+        dry,
+        CODEX_HOOK_EVENTS,
+        {"SessionStart": "session-start.py", "PreCompact": "pre-compact.py",
+         "Stop": "session-end.py"},
+        {"SessionStart": 15, "PreCompact": 10, "Stop": 10},
+        {"SessionStart": "startup|resume|clear|compact", "PreCompact": "manual|auto",
+         "Stop": None},
+        {"SessionStart": "Loading devlore context",
+         "PreCompact": "Capturing devlore context",
+         "Stop": "Capturing devlore session"},
+    )
+
+
+def merge_codebase_hooks(codebase: Path, kb: Path, dry: bool) -> str:
+    """Register capture hooks for supported local coding agents."""
+    return (
+        f"Claude: {merge_claude_hooks(codebase, kb, dry)}; "
+        f"Codex: {merge_codex_hooks(codebase, kb, dry)}"
+    )
 
 
 def main() -> None:
@@ -211,7 +260,7 @@ def main() -> None:
     # 4. codebase hook registration (merge-aware)
     for name, cb in links:
         note = merge_codebase_hooks(cb, kb, dry)
-        print(f"  ✓ {cb.name}/.claude/settings.local.json: {note}")
+        print(f"  ✓ capture hooks for {cb.name}: {note}")
 
     # 5. skeletons
     if not dry:
@@ -271,7 +320,7 @@ def main() -> None:
                        cwd=str(kb), capture_output=True)
         print("  ✓ git init + initial commit")
 
-    first = (f"  1. cd {codebases[0]}  &&  start a Claude Code session — capture is LIVE"
+    first = (f"  1. cd {codebases[0]}  &&  start a Claude Code or Codex session — capture is LIVE"
              if codebases else
              f"  1. opt your first codebase in:  {kb}/scripts/devlore add <codebase-path>")
     print(f"""

@@ -160,7 +160,7 @@ subsystem: subsystem-slug
 milestone: M5
 summary: "One-line catalog summary — this is the text the generated index shows."
 aliases: [alternate-name]
-tags: [domain, topic]
+tags: [project-slug, domain, topic]
 sources:
   - "daily/2026-04-01.md"
   - "daily/2026-04-03.md"
@@ -210,7 +210,7 @@ AND status != "superseded" SORT updated DESC`). Populate them on every article.
 | `unverifiable` | optional | PR D Tier-4: tag articles whose **load-bearing claims cannot be verified against our code** — `business_rule` (tax law, filing rules, accounting policy: needs a cited statute/authority or the operator) and/or `external_api` (Stripe/Hospitable/BANXICO/OS behavior: needs vendor docs or empirical re-test). Comma-combine when both apply. The verification ladder must NEVER auto-trust these claims; code-grounding gates (Tier-1/2/3) only cover the article's incidental code citations. |
 | `component` | optional | A finer-grained area within the subsystem (e.g. `orchestrator`, `audit.py`). |
 | `aliases` | optional | 0–2 only. Never duplicate the filename; scope generic terms so they don't collide. |
-| `tags` | optional | Free domain/topic tags. |
+| `tags` | yes | Inline list whose FIRST entry is always the article's `project:` slug — **machine-enforced**: the compiler's tag guard (`utils.ensure_required_tags`, run after every compile) inserts/reorders it and normalizes every tag to lowercase-kebab. After the slug, 2–5 curated domain tags chosen to make Obsidian's tag pane, graph filters, and Bases facets useful: reuse the existing vocabulary (the compile prompt shows tag → count), coin a new tag only when it will group 2+ articles, never add a near-synonym of an existing tag or duplicate the `subsystem:` value. |
 | `sources` | yes (concept/connection) | The daily log(s) that contributed. |
 | `created` / `updated` | yes | Full ISO 8601 with offset (`2026-04-03T00:00:00-06:00`) so Dataview can sort. `updated` = the compile/edit date. |
 | `valid_as_of` | yes | The knowledge *vintage* (the daily date the knowledge is from), date-only. NOT the compile date. Stamped by `stamp_baseline.py` / born-stamped by `compile.py`. |
@@ -230,6 +230,7 @@ type: connection
 status: active
 subsystem: subsystem-slug
 summary: "One-line catalog summary of the relationship."
+tags: [project-slug, domain]
 connects:
   - "concepts/concept-x"
   - "concepts/concept-y"
@@ -273,6 +274,7 @@ type: qa
 status: active
 subsystem: subsystem-slug
 summary: "One-line summary of the answer."
+tags: [project-slug, domain]
 question: "The exact question asked"
 consulted:
   - "concepts/article-1"
@@ -313,7 +315,7 @@ Conventions:
   class so nodes are clickable: `class slug-a,slug-b internal-link;`
 - MOCs are exempt from the orphan / backlink-reciprocity lint checks (hubs link out by
   design); they still require the full frontmatter (`type: moc`, `status`, `subsystem`,
-  `summary`).
+  `summary`, `tags`).
 - **Compiler contract:** when a compile creates a new article, add a link for it (with a
   one-line annotation) to the relevant section of its project's MOC. Do not rewrite or
   restructure the MOC beyond that.
@@ -326,6 +328,7 @@ type: moc
 status: active
 subsystem: architecture
 summary: "Architecture map + curated entry points for the project."
+tags: [project-slug, architecture-map]
 created: 2026-04-05T00:00:00-06:00
 updated: 2026-04-05T00:00:00-06:00
 ---
@@ -392,7 +395,7 @@ other frontmatter fields; the catalog follows automatically.
 
 ### 3. Lint (Health Checks)
 
-Seven checks, run periodically:
+Nine checks, run periodically:
 
 1. **Broken links** - `[[wikilinks]]` pointing to non-existent articles
 2. **Orphan pages** - Articles with zero inbound links from other articles
@@ -401,6 +404,8 @@ Seven checks, run periodically:
 5. **Contradictions** - Conflicting claims across articles (requires LLM judgment)
 6. **Missing backlinks** - A links to B but B doesn't link back to A
 7. **Sparse articles** - Below 200 words, likely incomplete
+8. **Frontmatter schema** - Missing/invalid `type`/`status`/`subsystem`/`summary`, unquoted YAML
+9. **Tags hygiene** - Missing `tags:`, project slug not first, malformed tags, singleton-tag sprawl
 
 Output: a markdown report with severity levels (error, warning, suggestion).
 
@@ -418,11 +423,17 @@ Output: a markdown report with severity levels (error, warning, suggestion).
   plain bold labels for Key Points and caveats.
 - **Aliases:** 0–2 per article, never the filename itself, and scope generic terms so they
   don't collide across articles.
+- **Tags:** the first tag is ALWAYS the article's `project:` slug — the deterministic tag
+  guard (compile post-pass) inserts/reorders it, so Obsidian can always filter or color a
+  whole project's articles by tag. The 2–5 domain tags after it are a **curated
+  vocabulary**, not free association: lowercase-kebab, reused across articles (a tag only
+  pays off when it groups 2+ articles), never a near-synonym of an existing tag, never a
+  duplicate of `subsystem:`. Lint flags singleton-tag sprawl.
 - **File naming:** lowercase, hyphens for spaces (e.g., `supabase-row-level-security.md`)
 - **Frontmatter YAML safety:** any scalar value containing `: ` MUST be double-quoted — `summary:` always. Unquoted colons parse in grep-based tools but are invalid YAML.
 - **Frontmatter:** Every article must carry the fields in the "Frontmatter fields" table
   above — at minimum `title`, `project`, `type`, `status`, `subsystem`, `summary`,
-  `sources`, `created`, `updated`.
+  `tags`, `sources`, `created`, `updated`.
 - **Sources:** Always link back to the daily log(s) that contributed to an article
 - **Backticks = literal code only:** Put inside `` `backticks` `` ONLY identifiers that exist
   verbatim in the code — function/method/variable/field/file names, metadata keys, config
@@ -443,6 +454,8 @@ Output: a markdown report with severity levels (error, warning, suggestion).
 llm-personal-kb/
 |-- .claude/
 |   |-- settings.json                # Hook configuration (auto-activates in Claude Code)
+|-- .codex/
+|   |-- hooks.json                   # Optional Codex hook configuration in opted-in codebases
 |-- .gitignore                       # Excludes runtime state, temp files, caches
 |-- AGENTS.md                        # This file - schema + full technical reference
 |-- README.md                        # Concise overview + quick start
@@ -461,7 +474,7 @@ llm-personal-kb/
 |   |-- flush.py                     #   Extract memories from conversations (background)
 |   |-- config.py                    #   Path constants
 |   |-- utils.py                     #   Shared helpers
-|-- hooks/                           # Claude Code hooks
+|-- hooks/                           # Claude Code + Codex hooks
 |   |-- session-start.py             #   Injects knowledge into every session
 |   |-- session-end.py               #   Extracts conversation -> daily log
 |   |-- pre-compact.py               #   Safety net: captures context before compaction
@@ -472,7 +485,9 @@ llm-personal-kb/
 
 ## Hook System (Automatic Capture)
 
-Hooks are configured in `.claude/settings.json` and fire automatically when you use Claude Code in this project.
+Hooks are configured in Claude Code's `.claude/settings.local.json` and Codex's
+`.codex/hooks.json` for opted-in codebases. Both flows call the same scripts and
+write the same daily logs.
 
 ### `.claude/settings.json` Format
 
@@ -488,6 +503,20 @@ Hooks are configured in `.claude/settings.json` and fire automatically when you 
 
 Commands use simple relative paths from the project root. Empty `matcher` catches all events.
 
+### `.codex/hooks.json` Format
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "uv run --directory <kb> python hooks/session-start.py", "timeout": 15 }] }],
+    "PreCompact": [{ "matcher": "manual|auto", "hooks": [{ "type": "command", "command": "uv run --directory <kb> python hooks/pre-compact.py", "timeout": 10 }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "uv run --directory <kb> python hooks/session-end.py", "timeout": 10 }] }]
+  }
+}
+```
+
+Codex requires project-local hooks to be trusted before they run.
+
 ### Hook Details
 
 **`session-start.py`** (SessionStart)
@@ -497,7 +526,7 @@ Commands use simple relative paths from the project root. Empty `matcher` catche
 - Claude sees the knowledge base index at the start of every session
 - Max context: 20,000 characters
 
-**`session-end.py`** (SessionEnd)
+**`session-end.py`** (Claude SessionEnd / Codex Stop)
 - Reads hook input from stdin (JSON with `session_id`, `transcript_path`, `cwd`)
 - Copies the raw JSONL transcript to a temp file (no parsing in the hook - keeps it fast)
 - Spawns `flush.py` as a fully detached background process
@@ -531,7 +560,8 @@ This ensures flush.py survives after Claude Code's hook process exits.
 
 ### JSONL Transcript Format
 
-Claude Code stores conversations as `.jsonl` files. Messages are nested under a `message` key:
+Claude Code stores conversations as `.jsonl` files with messages nested under a
+`message` key:
 
 ```python
 entry = json.loads(line)
@@ -541,6 +571,11 @@ content = msg.get("content", "")  # string or list of content blocks
 ```
 
 Content can be a string or a list of blocks (`{"type": "text", "text": "..."}` dicts).
+
+Codex stores session transcripts under `$CODEX_HOME/sessions` (default:
+`~/.codex/sessions`) as JSONL. User/assistant turns are `response_item` entries
+whose payload is a `message` with `input_text`/`output_text` content blocks. The
+shared `scripts/transcripts.py` parser normalizes both formats.
 
 ---
 
@@ -606,7 +641,7 @@ plugin's "Ask the devlore knowledge base" command + ribbon button.
 
 ### lint.py - Health Checks
 
-Seven checks:
+Nine checks:
 
 | Check | Type | Catches |
 |-------|------|---------|
@@ -616,6 +651,8 @@ Seven checks:
 | Stale articles | Structural | Source logs changed since compilation |
 | Missing backlinks | Structural | A links to B but B doesn't link back |
 | Sparse articles | Structural | Under 200 words |
+| Frontmatter schema | Structural | Missing/invalid `type`/`status`/`subsystem`/`summary`, unquoted YAML |
+| Tags hygiene | Structural | Missing `tags:`, project slug not first, malformed tags, singleton sprawl |
 | Contradictions | LLM | Conflicting claims across articles |
 
 **CLI:**
@@ -675,7 +712,7 @@ Add directories like `people/`, `projects/`, `tools/` to `knowledge/`. Define th
 
 ### Obsidian Integration
 
-The knowledge base is pure markdown with `[[wikilinks]]` - works natively in Obsidian. Point a vault at `knowledge/` for graph view, backlinks, and search.
+The knowledge base is pure markdown with `[[wikilinks]]` - works natively in Obsidian. Point a vault at `knowledge/` for graph view, backlinks, and search. Every article's `tags:` leads with its project slug, so the tag pane, graph filters (`tag:#project-slug`), and Bases views can slice the vault by project out of the box; the curated domain tags behind it power finer filtering.
 
 ### Scaling Beyond Index-Guided Retrieval
 
