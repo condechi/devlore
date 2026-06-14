@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # devlore — your AI conversations, compiled into a self-checking knowledge base.
 # This dispatcher operates on the KB it lives in (self-locating, multi-KB safe).
+#
+# The whole body lives in main() called as `main "$@"; exit $?` on one line, so
+# bash parses the entire script into memory before executing. `devlore update`
+# rewrites this very file in place; without the wrap, bash would resume reading
+# the now-overwritten file at a stale byte offset and emit spurious syntax errors
+# after a size-changing self-update.
+main() {
 set -uo pipefail
 
 # Resolve symlinks so KB is the real KB root even when devlore is invoked through
@@ -134,3 +141,5 @@ preview before confirming, especially with --full-recursive.
 EOF
     ;;
 esac
+}
+main "$@"; exit $?
