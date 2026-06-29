@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -17,6 +18,26 @@ from config import (
     QA_DIR,
     STATE_FILE,
 )
+
+
+# ── User-path resolution ──────────────────────────────────────────────
+
+def resolve_invocation_path(arg: str) -> Path:
+    """Resolve a user-supplied path against the directory devlore was invoked
+    FROM, not the Python process's cwd.
+
+    The `devlore` launcher runs scripts via `uv run --directory <KB>`, which
+    starts Python inside the KB — so a relative argument like `.` would resolve
+    to the KB itself (and `add` would reject it as "the knowledge base itself").
+    The launcher exports DEVLORE_INVOCATION_CWD (the caller's shell cwd) so
+    relative paths resolve where the user actually is. Absolute paths are
+    unaffected; the env var falls back to os.getcwd() when unset (e.g. a script
+    run directly, not through the launcher)."""
+    p = Path(arg).expanduser()
+    if not p.is_absolute():
+        base = os.environ.get("DEVLORE_INVOCATION_CWD") or os.getcwd()
+        p = Path(base) / p
+    return p.resolve()
 
 
 # ── Local git excludes ────────────────────────────────────────────────

@@ -31,7 +31,7 @@ from pathlib import Path
 
 KB = Path(__file__).resolve().parent.parent
 SCRIPTS = KB / "scripts"
-CLAUDE_HOOK_EVENTS = ("SessionStart", "PreCompact", "SessionEnd")
+CLAUDE_HOOK_EVENTS = ("SessionStart", "PreCompact", "SessionEnd", "Stop")
 CODEX_HOOK_EVENTS = ("SessionStart", "PreCompact", "Stop")
 
 
@@ -131,9 +131,10 @@ def main() -> None:
                                  "(bare `devlore` on PATH routes to the owning KB).")
     args = ap.parse_args()
 
-    codebase = Path(args.codebase).expanduser().resolve()
-
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from utils import resolve_invocation_path
+    codebase = resolve_invocation_path(args.codebase)
+
     from kb_resolve import resolve_or_redispatch
     fwd = [f for f, on in [("--yes", args.yes), ("--full", args.full)] if on]
     resolve_or_redispatch("remove", codebase, KB, fwd, args.kb, require_owner=False)

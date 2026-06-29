@@ -10,6 +10,12 @@
 main() {
 set -uo pipefail
 
+# The caller's shell directory, captured BEFORE PY() runs scripts via
+# `uv run --directory "$KB"` (which starts Python inside the KB). add/remove
+# resolve a relative path argument like `.` against this, so it means the
+# directory you ran devlore FROM — not the KB (utils.resolve_invocation_path).
+export DEVLORE_INVOCATION_CWD="$PWD"
+
 # Resolve symlinks so KB is the real KB root even when devlore is invoked through
 # a symlink on PATH (install.sh links ~/.local/bin/devlore → <KB>/scripts/devlore).
 # The bare PATH symlink is the one AMBIGUOUS way in: mark it so add/remove can

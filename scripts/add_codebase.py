@@ -190,7 +190,8 @@ def main() -> None:
                                  "(bare `devlore` on PATH routes to the owning KB).")
     args = ap.parse_args()
 
-    codebase = Path(args.codebase).expanduser().resolve()
+    from utils import resolve_invocation_path
+    codebase = resolve_invocation_path(args.codebase)
     if not codebase.is_dir():
         sys.exit(f"error: not a directory: {codebase}")
 
