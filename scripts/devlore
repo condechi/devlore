@@ -100,10 +100,11 @@ already knowing your project's lore.
 
 Getting started
   devlore add <codebase>      opt a repo in: live capture from now on, plus an
-                              offer to backfill its past conversations and
-                              ingest its markdown docs (git-aware scan of the
-                              root + first-level dirs; --full-recursive for
-                              the whole tree)
+                              offer to backfill THIS codebase's past conversations
+                              and ingest its markdown docs (git-aware scan of the
+                              root + first-level dirs; --full-recursive for the
+                              whole tree; --compile-pending also compiles any
+                              pending daily logs into articles now)
   devlore status              what this KB holds: articles, dailies, captured
                               sessions, capture roots, spend, staleness
   devlore ask "question"      cited answer from the KB (index-guided retrieval;

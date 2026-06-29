@@ -94,6 +94,17 @@ def _encode(path: str) -> str:
     return path.replace("/", "-").replace("_", "-").replace(".", "-")
 
 
+def _under_root(project_dir_name: str, root: str) -> bool:
+    """True if a Claude project-dir name is the encoded `root`, or a subtree /
+    worktree of it. Used to SCOPE discovery to a single codebase (e.g. `devlore
+    add <dir>` backfills only that dir's own conversations, not every capture
+    root). The encoding is lossy, so this is deliberately over-inclusive toward
+    the root's own tree — far better than the global sweep, and the dialogue-size
+    floor filters noise."""
+    enc = _encode(root)
+    return project_dir_name == enc or project_dir_name.startswith(enc + "-")
+
+
 def captured_project_dirs() -> list[Path]:
     """Transcript dirs under ~/.claude/projects/ whose cwd is opted-in per
     scripts/capture-roots (exact root → exact dir; subtree root → prefix match)."""
@@ -182,16 +193,22 @@ def chunk_dialogue(dialogue: str) -> list[str]:
 
 
 def discover(min_size: int, haiku_max: int, only_session: str | None,
-             force: bool = False) -> tuple[list[dict], list[dict]]:
+             force: bool = False, only_root: str | None = None) -> tuple[list[dict], list[dict]]:
     """(candidates oldest-first, warm_skipped). Candidates: [{sid, path, project, size,
     dialogue_chars, chunks, date, last_iso, model}]. Skips flushed and too-small
     transcripts silently; still-warm ones (possibly ACTIVE sessions) are returned
-    separately so callers can print a named TODO instead of hiding them."""
+    separately so callers can print a named TODO instead of hiding them.
+
+    only_root (an absolute codebase path) restricts discovery to that codebase's
+    own conversations — its transcript dir, subdirectories, and worktrees — so
+    `devlore add <dir>` backfills just <dir>, not every capture root."""
     flushed = _flushed_session_ids()
     import time
     out = []
     warm: list[dict] = []
     for d in captured_project_dirs():
+        if only_root and not _under_root(d.name, only_root):
+            continue
         for t in sorted(d.glob("*.jsonl")):
             sid = t.stem
             if only_session and not sid.startswith(only_session):
@@ -230,6 +247,9 @@ def discover(min_size: int, haiku_max: int, only_session: str | None,
             continue
         meta = transcript_metadata(t)
         cwd = meta.get("cwd", "")
+        if only_root and not (isinstance(cwd, str)
+                              and (cwd == only_root or cwd.startswith(only_root + "/"))):
+            continue
         project = Path(cwd).name if isinstance(cwd, str) and cwd else "codex"
         if time.time() - t.stat().st_mtime < 1800:
             warm.append({"sid": sid, "project": project,
@@ -543,6 +563,9 @@ def main() -> None:
     ap.add_argument("--yes", action="store_true", help="Execute (default is dry-run plan+estimate).")
     ap.add_argument("--limit", type=int, default=0, help="Process only the oldest N candidates.")
     ap.add_argument("--session", help="Only the session whose id starts with this prefix.")
+    ap.add_argument("--root", help="Only conversations whose codebase is this absolute path "
+                                   "(its dir, subdirs, and worktrees) — scopes the sweep to one "
+                                   "codebase, e.g. how `devlore add <dir>` backfills just <dir>.")
     ap.add_argument("--force", action="store_true",
                     help="With --session: re-ingest even if a flush marker exists (recover a "
                          "history hidden by a partial first-flush; the compiler dedupes overlap).")
@@ -555,7 +578,8 @@ def main() -> None:
     if args.force and not args.session:
         ap.error("--force requires --session <sid>")
 
-    convs, warm = discover(args.min_size, args.haiku_max, args.session, force=args.force)
+    convs, warm = discover(args.min_size, args.haiku_max, args.session,
+                           force=args.force, only_root=args.root)
     if args.force_model:
         for c in convs:
             c["model"] = args.force_model

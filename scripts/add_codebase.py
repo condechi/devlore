@@ -81,11 +81,15 @@ def wire(codebase: Path) -> str:
     return name
 
 
-def backfill(assume_yes: bool) -> None:
-    """Discover past conversations (all captured roots) and offer the gated backfill."""
-    print("\nLooking for PAST Claude Code and Codex conversations to distill…")
+def backfill(codebase: Path, assume_yes: bool) -> None:
+    """Discover THIS codebase's past conversations and offer the gated backfill.
+
+    Scoped to `codebase` (via ingest_all_context.py --root) so adding a repo
+    backfills only its own history — not every other capture root in the KB.
+    The standalone `devlore backfill` stays global for a deliberate full sweep."""
+    print("\nLooking for PAST Claude Code and Codex conversations in this codebase to distill…")
     plan = subprocess.run(
-        [sys.executable, str(SCRIPTS / "ingest_all_context.py")],
+        [sys.executable, str(SCRIPTS / "ingest_all_context.py"), "--root", str(codebase)],
         capture_output=True, text=True, cwd=str(KB))
     out = plan.stdout.strip()
     if "No candidate conversations" in out:
@@ -99,7 +103,7 @@ def backfill(assume_yes: bool) -> None:
         print("  · skipped — run `devlore backfill` any time")
         return
     subprocess.run(
-        [sys.executable, str(SCRIPTS / "ingest_all_context.py"), "--yes"],
+        [sys.executable, str(SCRIPTS / "ingest_all_context.py"), "--yes", "--root", str(codebase)],
         cwd=str(KB))
 
 
@@ -139,6 +143,20 @@ def ingest_docs(codebase: Path, assume_yes: bool, full_recursive: bool = False) 
     print("\nCompiling into wiki articles (this is the LLM step — it can take a few minutes)…")
     subprocess.run([sys.executable, str(SCRIPTS / "compile.py")], cwd=str(KB))
     return True
+
+
+def compile_pending() -> None:
+    """Compile every pending/changed daily log into wiki articles NOW.
+
+    Backfill already compiles the conversations it ingests, and doc-ingest
+    compiles what it ingests — but live-captured daily entries (and any other
+    uncompiled dailies) otherwise wait for the evening auto-compile or a manual
+    `devlore compile`. `--compile-pending` flushes that whole backlog at add
+    time. compile.py is incremental: already-compiled dailies are skipped, so
+    this only does (and bills for) genuinely pending work."""
+    print("\nCompiling all pending daily logs into wiki articles "
+          "(LLM step — can take a few minutes; already-compiled dailies are skipped)…")
+    subprocess.run([sys.executable, str(SCRIPTS / "compile.py")], cwd=str(KB))
 
 
 def briefing(before_count: int) -> None:
@@ -186,6 +204,10 @@ def main() -> None:
                          "first-level dirs. The git/deny-list/tripwire filters still "
                          "apply, but review the preview — every accepted file is "
                          "compiled at real LLM cost.")
+    ap.add_argument("--compile-pending", action="store_true",
+                    help="After wiring/backfill/docs, compile ALL pending daily logs into "
+                         "wiki articles now (incremental — skips already-compiled dailies), "
+                         "instead of waiting for the evening auto-compile or `devlore compile`.")
     ap.add_argument("--kb", help="Operate on this KB instead of resolving the owner "
                                  "(bare `devlore` on PATH routes to the owning KB).")
     args = ap.parse_args()
@@ -197,7 +219,8 @@ def main() -> None:
 
     from kb_resolve import resolve_or_redispatch
     fwd = [f for f, on in [("--yes", args.yes), ("--no-backfill", args.no_backfill),
-                           ("--no-docs", args.no_docs), ("--full-recursive", args.full_recursive)] if on]
+                           ("--no-docs", args.no_docs), ("--full-recursive", args.full_recursive),
+                           ("--compile-pending", args.compile_pending)] if on]
     resolve_or_redispatch("add", codebase, KB, fwd, args.kb, require_owner=True)
 
     if str(codebase) == "/" or not str(codebase).startswith(str(Path.home())):
@@ -214,9 +237,11 @@ def main() -> None:
     print(f"Adding {codebase} to the knowledge base at {KB}\n")
     wire(codebase)
     if not args.no_backfill:
-        backfill(args.yes)
+        backfill(codebase, args.yes)
     if not args.no_docs:
         ingest_docs(codebase, args.yes, args.full_recursive)
+    if args.compile_pending:
+        compile_pending()
     briefing(before)
 
 
