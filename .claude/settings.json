@@ -35,6 +35,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --directory __DEVLORE_HOME__ python hooks/stop.py",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }

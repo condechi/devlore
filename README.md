@@ -64,7 +64,7 @@ Answers come back **cited** — every claim links to the articles (and the daily
   - **Tier 4 — honesty about limits**: claims resting on law, policy, or external-API behavior are tagged as never auto-trustable.
 - 💸 **Cost transparency** — anything that spends money shows a plan + estimate first and waits for your yes. Batch backfills run behind regression checks and auto-quarantine with full rollback.
 - 🗃️ **Git-versioned by design** — the KB auto-commits after every pipeline write. Your knowledge history is one `git log` away. Local-only; nothing ever leaves your machine.
-- 🔌 **Obsidian as an optional superpower** — open the KB directory as a vault and get graph view, clickable wikilinks, Dataview-queryable frontmatter, clickable architecture diagrams, and a side panel. But the whole system runs headless; Obsidian is a skin, never a dependency.
+- 🔌 **Obsidian as an optional superpower** — open the KB directory as a vault and get graph view, clickable wikilinks, Dataview-queryable frontmatter, clickable architecture diagrams, and a side-panel plugin that drives ingest / compile / ask / verify / status from the ribbon and command palette. Didn't opt in at install? `devlore obsidian` adds it anytime. (One-time: Obsidian disables third-party plugins until you trust the vault and toggle devlore on under Settings → Community plugins — `devlore obsidian` prints the exact steps.) But the whole system runs headless; Obsidian is a skin, never a dependency.
 
 ## How it works
 
@@ -99,6 +99,7 @@ Source-code analogy (h/t Karpathy): the daily logs are *source code*, the compil
 | `devlore docs <path>` | Ingest markdown docs, then compile (a dir scans root + first-level subdirs, git-aware + vendor-filtered; `--full-recursive` for the whole tree — compiling costs real money, review the preview) |
 | `devlore status` | What the KB holds: articles, dailies, captured sessions, capture roots, spend |
 | `devlore update` | Refresh the KB's machinery from the latest release (your knowledge is never touched) |
+| `devlore obsidian` | Add/refresh the optional Obsidian layer (side-panel plugin + vault config) in this KB — use it if you skipped Obsidian at install; prints the one-time activation steps |
 | `devlore version` | Print the installed devlore version |
 | `devlore init <dir>` | Bootstrap a *second* knowledge base for another project |
 

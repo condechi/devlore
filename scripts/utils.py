@@ -19,6 +19,34 @@ from config import (
 )
 
 
+# ── Local git excludes ────────────────────────────────────────────────
+
+def git_exclude(repo: Path, name: str, *, add: bool) -> bool:
+    """Idempotently add/remove `name` in <repo>/.git/info/exclude — git's LOCAL,
+    never-shared, update-safe ignore list.
+
+    Code-root symlinks (machine-specific paths, recreated by `devlore add`/`init`)
+    belong HERE, not in the dist-managed `.gitignore` (which `devlore update`
+    overwrites wholesale, so per-KB entries there would be clobbered — and stale
+    names baked into the template would leak to every KB). No-op when `repo` is not
+    a git checkout. Returns True iff the exclude file changed."""
+    git_dir = repo / ".git"
+    if not git_dir.exists():
+        return False
+    excl = git_dir / "info" / "exclude"
+    lines = excl.read_text(encoding="utf-8").splitlines() if excl.exists() else []
+    present = any(line.strip() == name for line in lines)
+    if add == present:
+        return False
+    if add:
+        lines.append(name)
+    else:
+        lines = [line for line in lines if line.strip() != name]
+    excl.parent.mkdir(parents=True, exist_ok=True)
+    excl.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
+    return True
+
+
 # ── State management ──────────────────────────────────────────────────
 
 def load_state() -> dict:

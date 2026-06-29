@@ -73,6 +73,9 @@ def wire(codebase: Path) -> str:
         print("  · already opted in (capture-roots)")
     if _append_line(SCRIPTS / "code-roots", name):
         print("  ✓ code root registered (staleness + symbol verification will scan it)")
+    from utils import git_exclude
+    if git_exclude(KB, name, add=True):
+        print(f"  ✓ code link kept out of git ({name} → .git/info/exclude)")
     note = merge_codebase_hooks(codebase, KB, dry=False)
     print(f"  ✓ capture hooks for Claude Code + Codex in {codebase.name}: {note}")
     return name

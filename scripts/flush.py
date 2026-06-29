@@ -101,7 +101,7 @@ def save_flush_state(state: dict) -> None:
     STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
 
 
-def append_to_daily_log(content: str, section: str = "Session") -> None:
+def append_to_daily_log(content: str, section: str = "Session", project: str = "") -> None:
     """Append content to today's daily log."""
     today = datetime.now(timezone.utc).astimezone()
     log_path = DAILY_DIR / f"{today.strftime('%Y-%m-%d')}.md"
@@ -114,7 +114,13 @@ def append_to_daily_log(content: str, section: str = "Session") -> None:
         )
 
     time_str = today.strftime("%H:%M")
-    entry = f"### {section} ({time_str})\n\n{content}\n\n"
+    # The source project goes in the entry BODY, not the header: compile splits and
+    # hashes entries off ENTRY_HEADER_RE (`### Session (`), so the header MUST stay
+    # verbatim. As a body line it still gives compile (and a human skimming a daily
+    # that mixes several projects) ground truth about which codebase an entry came
+    # from — the signal that keeps one shared KB from cross-attributing knowledge.
+    tag = f"**Project:** {project}\n\n" if project else ""
+    entry = f"### {section} ({time_str})\n\n{tag}{content}\n\n"
 
     with open(log_path, "a", encoding="utf-8") as f:
         f.write(entry)
@@ -286,6 +292,10 @@ def main():
     except ValueError:
         truncated = 0
 
+    # Source project label (basename of the capture cwd), set by the spawning hook
+    # so each daily entry records WHICH codebase it came from. "" when unavailable.
+    project = os.environ.get("DEVLORE_CAPTURE_PROJECT", "")
+
     logging.info("flush.py started for session %s, context: %s", session_id, context_file)
 
     if not context_file.exists():
@@ -358,16 +368,16 @@ def main():
     # Append to daily log + emit a background-activity event (for the notifier).
     from activity import emit
     if saved_parts:
-        append_to_daily_log("\n\n".join(saved_parts) + defer_note, "Session")
+        append_to_daily_log("\n\n".join(saved_parts) + defer_note, "Session", project)
         logging.info("Result: saved %d/%d chunk(s) to daily log", len(saved_parts), len(chunks))
         emit("flush", "saved", f"captured ~{max(1, len(context)//1000)}K of dialogue → daily")
     elif had_error:
-        append_to_daily_log("FLUSH_ERROR during delta flush — see flush.log" + defer_note, "Memory Flush")
+        append_to_daily_log("FLUSH_ERROR during delta flush — see flush.log" + defer_note, "Memory Flush", project)
         emit("flush", "error", "flush failed (CLI error — see flush.log)", "error")
     else:
         logging.info("Result: FLUSH_OK")
         append_to_daily_log(
-            "FLUSH_OK - Nothing worth saving from this session" + defer_note, "Memory Flush"
+            "FLUSH_OK - Nothing worth saving from this session" + defer_note, "Memory Flush", project
         )
         emit("flush", "ok", "flush: nothing new worth saving")
     if deferred > 0:

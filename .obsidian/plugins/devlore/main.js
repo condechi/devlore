@@ -1,22 +1,29 @@
 'use strict';
 
 /*
- * devlore Ingest — a single-purpose Obsidian plugin.
+ * devlore — a single-purpose Obsidian plugin for your devlore knowledge base.
  *
- * It adds ingest, compile, and ask actions to the command palette, assignable
- * hotkeys, ribbon buttons, and the right-click menu for notes and folders. Each
- * action runs ONE hardcoded script — scripts/devlore.sh, scripts/compile.sh, or
- * scripts/query.sh.
+ * It adds devlore actions to the command palette, assignable hotkeys, ribbon
+ * buttons, and the right-click menu for notes and folders:
+ *   - ingest    a note/folder into the KB (scripts/devlore.sh)
+ *   - compile   pending daily logs into wiki articles (scripts/compile.sh)
+ *   - ask       the KB a question, cited answer (scripts/query.sh)
+ *   - verify    the Tier-1/Tier-2 trust gates, no cost (scripts/verify.sh)
+ *   - status    one-view KB summary (scripts/status.sh)
+ *   - update    refresh this KB's machinery from the latest release (scripts/update.sh)
+ *   - recheck   refresh article staleness marks (scripts/recheck.sh)
+ * Each action runs ONE hardcoded script from the list below — nothing else.
  *
  * Security design (why this is safer than the Shell Commands plugin):
  *   - Every script path is hardcoded below. This plugin is NOT a general command
  *     runner, so a malicious/shared vault cannot reconfigure it to execute
  *     arbitrary commands (that is exactly how the Shell Commands plugin gets
- *     weaponized — REF6598 / PHANTOMPULSE, 2026).
+ *     weaponized — REF6598 / PHANTOMPULSE, 2026). The set of runnable scripts is
+ *     fixed at this short, auditable allowlist — adding one means editing this file.
  *   - It uses child_process.execFile via /bin/bash with the file path passed as a
  *     separate argv element — NO shell string is built, so filenames containing
  *     spaces or shell metacharacters cannot inject a command.
- *   - The whole plugin is ~60 lines you can read top to bottom; you own it.
+ *   - The whole plugin is one file you can read top to bottom; you own it.
  */
 
 const { Plugin, Notice, TFolder, Modal } = require('obsidian');
@@ -24,10 +31,14 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-// The only commands this plugin can ever run (both hardcoded — not a general runner).
+// The only commands this plugin can ever run (all hardcoded — not a general runner).
 const DEVLORE_SH = '__DEVLORE_HOME__/scripts/devlore.sh';
 const COMPILE_SH = '__DEVLORE_HOME__/scripts/compile.sh';
 const QUERY_SH = '__DEVLORE_HOME__/scripts/query.sh';
+const VERIFY_SH = '__DEVLORE_HOME__/scripts/verify.sh';
+const STATUS_SH = '__DEVLORE_HOME__/scripts/status.sh';
+const RECHECK_SH = '__DEVLORE_HOME__/scripts/recheck.sh';
+const UPDATE_SH = '__DEVLORE_HOME__/scripts/update.sh';
 // Heartbeat written by scripts/compile.py while a compile is running.
 const COMPILE_STATUS = '__DEVLORE_HOME__/scripts/compile.status.json';
 // Unified background-activity stream (scripts/activity.py): flush/compile/ingest events.
@@ -106,23 +117,24 @@ class AskModal extends Modal {
   onClose() { this.contentEl.empty(); }
 }
 
-// Show a returned answer in a scrollable, read-only modal (the answer is cited
-// markdown; shown as plain text so the [[wikilinks]] stay visible).
-class AnswerModal extends Modal {
-  constructor(app, question, answer) {
+// Show script output in a scrollable, read-only modal — cited answers, the
+// verification report, the status summary. Shown as plain text so [[wikilinks]]
+// and file:line pointers stay visible and selectable.
+class TextModal extends Modal {
+  constructor(app, title, body) {
     super(app);
-    this.question = question;
-    this.answer = answer;
+    this.title = title;
+    this.body = body;
   }
   onOpen() {
     const { contentEl } = this;
-    contentEl.createEl('h3', { text: `Q: ${this.question}` });
+    contentEl.createEl('h3', { text: this.title });
     const pre = contentEl.createEl('pre');
     pre.style.whiteSpace = 'pre-wrap';
     pre.style.maxHeight = '60vh';
     pre.style.overflow = 'auto';
     pre.style.userSelect = 'text';
-    pre.setText(this.answer);
+    pre.setText(this.body);
   }
   onClose() { this.contentEl.empty(); }
 }
@@ -168,9 +180,55 @@ module.exports = class DevLorePlugin extends Plugin {
           return;
         }
         const answer = (stdout || '').trim() || '(no answer produced)';
-        new AnswerModal(this.app, question, answer).open();
+        new TextModal(this.app, `Q: ${question}`, answer).open();
       });
     }).open();
+  }
+
+  // Run a hardcoded read-only script and show its full output in a modal — for
+  // verify and status, whose reports are worth reading top to bottom.
+  runToModal(scriptArgs, title, startMsg) {
+    new Notice(startMsg);
+    execFile('/bin/bash', scriptArgs, { timeout: TIMEOUT_MS }, (err, stdout, stderr) => {
+      if (err && !stdout) {
+        console.error('[devlore]', err, stderr);
+        new Notice(`devlore failed: ${err.message}`, 8000);
+        return;
+      }
+      const body = ((stdout || '') + (stderr ? `\n${stderr}` : '')).trim() || '(no output)';
+      new TextModal(this.app, title, body).open();
+    });
+  }
+
+  // Trust gate: Tier-1 symbol + Tier-2 staleness ladder. Deterministic, no cost.
+  verify() {
+    this.runToModal([VERIFY_SH], 'devlore — verification (Tier-1/Tier-2)',
+      'devlore: verifying knowledge base (no cost)…');
+  }
+
+  // One-view KB summary: articles, dailies, sessions, capture roots, staleness.
+  showStatus() {
+    this.runToModal([STATUS_SH], 'devlore — status', 'devlore: reading status…');
+  }
+
+  // Refresh the machinery (scripts/hooks/plugin) from the latest release. Knowledge
+  // is never touched. The running plugin instance is stale until Obsidian reloads.
+  updateMachinery() {
+    new Notice('devlore: updating machinery from the latest release…');
+    execFile('/bin/bash', [UPDATE_SH], { timeout: TIMEOUT_MS }, (err, stdout, stderr) => {
+      if (err) {
+        console.error('[devlore]', err, stderr);
+        new Notice(`devlore update failed: ${err.message}`, 9000);
+        return;
+      }
+      const lastLine = (stdout || '').trim().split('\n').filter(Boolean).pop() || 'done';
+      new Notice(`devlore ✓ ${lastLine} — reload Obsidian to load a refreshed plugin.`, 12000);
+    });
+  }
+
+  // Refresh needs-reverification marks after working-tree edits. No cost.
+  recheckArticles() {
+    runScript([RECHECK_SH], 'devlore: rechecking article staleness marks…');
   }
 
   pidAlive(pid) {
@@ -287,11 +345,46 @@ module.exports = class DevLorePlugin extends Plugin {
       callback: () => this.askQuery(),
     });
 
+    // Command palette entry + assignable hotkey: verify (trust gate, no cost).
+    this.addCommand({
+      id: 'verify-knowledge-base',
+      name: 'Verify devlore knowledge base (Tier-1/Tier-2)',
+      callback: () => this.verify(),
+    });
+
+    // Command palette entry + assignable hotkey: one-view KB status.
+    this.addCommand({
+      id: 'show-status',
+      name: 'Show devlore status',
+      callback: () => this.showStatus(),
+    });
+
+    // Command palette entry: refresh machinery from the latest release (palette-only —
+    // a maintenance action, kept off the ribbon to avoid accidental clicks).
+    this.addCommand({
+      id: 'update-machinery',
+      name: 'Update devlore machinery (refresh from latest release)',
+      callback: () => this.updateMachinery(),
+    });
+
+    // Command palette entry: refresh article staleness marks (palette-only).
+    this.addCommand({
+      id: 'recheck-articles',
+      name: 'Recheck devlore article staleness marks',
+      callback: () => this.recheckArticles(),
+    });
+
     // Left-ribbon button for one-click manual compile.
     this.addRibbonIcon('refresh-cw', 'Compile devlore knowledge base', () => this.compileNow());
 
     // Left-ribbon button to ask the knowledge base.
     this.addRibbonIcon('help-circle', 'Ask the devlore knowledge base', () => this.askQuery());
+
+    // Left-ribbon button to verify the knowledge base (trust gate, no cost).
+    this.addRibbonIcon('shield-check', 'Verify devlore knowledge base', () => this.verify());
+
+    // Left-ribbon button for the one-view KB status summary.
+    this.addRibbonIcon('info', 'Show devlore status', () => this.showStatus());
 
     // Right-click on a note or folder in the file explorer.
     this.registerEvent(

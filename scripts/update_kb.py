@@ -48,6 +48,46 @@ def _rewrite(text: str, src: Path, kb: Path) -> str:
     return text.replace(PLACEHOLDER, str(kb)).replace(str(src), str(kb))
 
 
+def _rewire_capture_hooks(kb: Path) -> None:
+    """Re-register capture hooks in every EXTERNAL captured project's agent config.
+
+    `devlore update` re-materializes the KB's own machinery + its own
+    .claude/settings.json, but captured projects OUTSIDE the KB keep their hook
+    wiring in their own settings.local.json / .codex/hooks.json — written once at
+    opt-in time. A NEW hook event (e.g. the Stop bootstrap hook) would never reach
+    them without this. The merge is idempotent: it only adds missing events and
+    never clobbers existing settings."""
+    cr = kb / "scripts" / "capture-roots"
+    if not cr.exists():
+        return
+    sys.path.insert(0, str(kb / "scripts"))
+    try:
+        from optin import project_root_of
+        from init_kb import merge_codebase_hooks
+    except Exception as e:
+        print(f"  ⚠ could not load hook-rewire helpers: {e}")
+        return
+    seen: set[Path] = set()
+    for line in cr.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        d = Path(line.rstrip("/"))
+        if d == kb or str(d).startswith(str(kb) + "/"):
+            continue  # inside the KB → covered by the KB's own settings.json
+        if not d.is_dir():
+            continue
+        proj = project_root_of(d)
+        if proj in seen:
+            continue
+        seen.add(proj)
+        try:
+            note = merge_codebase_hooks(proj, kb, dry=False)
+            print(f"  ✓ rewired hooks for {proj.name}: {note}")
+        except Exception as e:
+            print(f"  ⚠ could not rewire {proj}: {e}")
+
+
 def _copy(src_file: Path, dst_file: Path, src: Path, kb: Path) -> None:
     dst_file.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -130,6 +170,23 @@ def main() -> None:
     if cli.exists():
         cli.chmod(cli.stat().st_mode | 0o111)
     print(f"  ✓ {n} machinery file(s) refreshed (knowledge/daily/config untouched)")
+
+    # Re-wire capture hooks into external captured projects so new hook events
+    # (e.g. the Stop bootstrap hook) reach existing installs, not just new opt-ins.
+    _rewire_capture_hooks(kb)
+
+    # Self-heal: code-root symlinks are machine-specific and belong in the LOCAL,
+    # update-safe .git/info/exclude — not the dist-managed .gitignore (which this
+    # very step just overwrote). Sync every current code root so a later `git add`
+    # never tracks them, regardless of what the template .gitignore carries.
+    sys.path.insert(0, str(kb / "scripts"))
+    from utils import git_exclude
+    cr = kb / "scripts" / "code-roots"
+    if cr.exists():
+        for line in cr.read_text(encoding="utf-8").splitlines():
+            nm = line.strip()
+            if nm and not nm.startswith("#"):
+                git_exclude(kb, nm, add=True)
 
     r = subprocess.run(["uv", "sync", "--directory", str(kb)], capture_output=True, text=True)
     print(f"  {'✓' if r.returncode == 0 else '⚠'} uv sync")

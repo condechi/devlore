@@ -45,6 +45,7 @@ case "$cmd" in
   recheck)    PY recheck.py "${@:2}" ;;
   remove)     PY remove_codebase.py "${@:2}" ;;
   update)     PY update_kb.py "${@:2}" ;;
+  obsidian)   PY obsidian_setup.py "${@:2}" ;;
   init)       PY init_kb.py "${@:2}" ;;
   version|--version|-V)
     echo "devlore v$VER  (KB: $KB)"
@@ -121,6 +122,14 @@ Trust & upkeep
                               release — knowledge/, daily/, and your config are
                               never touched
   devlore version             print the installed devlore version
+
+Obsidian (optional)
+  devlore obsidian            add/refresh the optional Obsidian layer in THIS KB
+                              — the side-panel plugin + vault config, so you can
+                              open the KB as a vault (ingest/compile/ask/verify/
+                              status from the palette, ribbon, right-click). Safe
+                              to re-run; prints the one-time activation steps. Use
+                              it if you skipped Obsidian at install time.
 
 Elsewhere
   devlore init <dir> [...]    bootstrap ANOTHER knowledge base in a new

@@ -478,6 +478,7 @@ llm-personal-kb/
 |   |-- session-start.py             #   Injects knowledge into every session
 |   |-- session-end.py               #   Extracts conversation -> daily log
 |   |-- pre-compact.py               #   Safety net: captures context before compaction
+|   |-- stop.py                      #   Bootstrap/safety-valve early capture (Claude Stop)
 |-- reports/                         # Lint reports (gitignored)
 ```
 
@@ -496,7 +497,8 @@ write the same daily logs.
   "hooks": {
     "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/session-start.py", "timeout": 15 }] }],
     "PreCompact": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/pre-compact.py", "timeout": 10 }] }],
-    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/session-end.py", "timeout": 10 }] }]
+    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/session-end.py", "timeout": 10 }] }],
+    "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "uv run python hooks/stop.py", "timeout": 10 }] }]
   }
 }
 ```
@@ -528,17 +530,55 @@ Codex requires project-local hooks to be trusted before they run.
 
 **`session-end.py`** (Claude SessionEnd / Codex Stop)
 - Reads hook input from stdin (JSON with `session_id`, `transcript_path`, `cwd`)
-- Copies the raw JSONL transcript to a temp file (no parsing in the hook - keeps it fast)
-- Spawns `flush.py` as a fully detached background process
+- Extracts the delta since this session's last save (`transcripts.extract_delta`,
+  uncapped — it is the last chance to capture, so flush.py chunks the full delta)
+- Writes the delta to a temp `.md` and spawns `flush.py` as a detached background process
 - Recursion guard: exits immediately if `CLAUDE_INVOKED_BY` env var is set
 
 **`pre-compact.py`** (PreCompact)
-- Same architecture as session-end.py
+- Same architecture as session-end.py, but applies the roll-forward char cap
+  (keep the oldest turns that fit in `max_chars`, defer the newer overflow)
 - Fires before Claude Code auto-compacts the context window
 - Guards against empty `transcript_path` (known Claude Code bug #13668)
-- Critical for long sessions: captures context before summarization discards it
+- Reports first-flush `truncated` so a capture that races past `max_turns`
+  before any save leaves a visible recovery breadcrumb (not a silent drop)
 
-**Why both PreCompact and SessionEnd?** Long-running sessions may trigger multiple auto-compactions before you close the session. Without PreCompact, intermediate context is lost to summarization before SessionEnd ever fires.
+**`stop.py`** (Claude Stop — Claude Code only)
+- Fires after every assistant turn; almost always exits immediately (one
+  transcript scan that early-exits at the relevant threshold)
+- Spawns a background flush only to **bootstrap** (no save marker yet AND turns
+  ≥ `bootstrap_turns`) or as a **safety valve** (a marker exists but
+  turns-since-save ≥ `max_turns` — a long session that never compacted)
+- Per-session debounce file prevents duplicate spawns while a flush is still running
+- Recursion guard like the others; opt-in gate like the others
+- Codex does not register this — its Stop event already maps to session-end.py
+
+**Why PreCompact + SessionEnd + Stop?** SessionEnd fires only at the very end and
+PreCompact only on compaction, so a long session that has done neither has
+captured nothing — and its eventual first flush would keep only the last
+`max_turns` turns, hiding the rest behind the marker (the first-flush footgun).
+`stop.py` closes that gap by establishing the delta marker EARLY (after
+`bootstrap_turns`), making capture genuinely fire-and-forget. After the
+bootstrap, PreCompact/SessionEnd delta capture keeps everything current.
+
+### Capture sizing & cadence (`scripts/capture-config`)
+
+All four capture surfaces (the three hooks + the status line) read their limits
+from `scripts/capture-config` via `capture_config.get_limits()`. Each hook is a
+fresh process per event, so **edits take effect on the next captured session
+event — no restart or new session needed.**
+
+| Knob | Default | What it controls | When to change it |
+|---|---|---|---|
+| `bootstrap_turns` | 45 | Turns after which `stop.py` auto-fires the FIRST flush (sets the delta marker early). `0` disables the bootstrap. | **Lower** (e.g. 25) to bank knowledge sooner. **Raise** (60–80) if your early turns are scaffolding/architecture you'd rather see settled before the first save. Keep it well below `max_turns`. |
+| `max_turns` | 120 | First-flush look-back window; status-line gauge; `stop.py` safety-valve threshold. | Raise only if you knowingly want bigger first flushes; with the bootstrap on, the first-flush window rarely matters. |
+| `max_chars` | 50000 | Per-flush text cap (PreCompact/Stop); roll-forward defers the overflow to the next flush. | Raise if you compact rarely and want bigger bites per flush. |
+| `chunk_chars` | 45000 | Summarizer chunk size for large captures. | Rarely changed; lower if the summarizer model's context is tight. |
+
+Rule of thumb: the bootstrap is what removes the "exit-and-wait" burden, so the
+only knob most users touch is `bootstrap_turns`. The status line (`🧠 N/max_turns`)
+shows turns since the last *save*; with the bootstrap on it should reset itself
+shortly after `bootstrap_turns` without any action from you.
 
 ### Background Flush Process (`flush.py`)
 
@@ -713,6 +753,11 @@ Add directories like `people/`, `projects/`, `tools/` to `knowledge/`. Define th
 ### Obsidian Integration
 
 The knowledge base is pure markdown with `[[wikilinks]]` - works natively in Obsidian. Point a vault at `knowledge/` for graph view, backlinks, and search. Every article's `tags:` leads with its project slug, so the tag pane, graph filters (`tag:#project-slug`), and Bases views can slice the vault by project out of the box; the curated domain tags behind it power finer filtering.
+
+**Optional side-panel plugin** (`.obsidian/plugins/devlore/`): a single-purpose, hardcoded-script plugin (NOT a general command runner — see the header in `main.js`) that surfaces devlore from the ribbon, command palette, and right-click menu: ingest, compile, ask, **verify**, **status**, **update** (refresh machinery), and **recheck**. Each action runs exactly one venv-python wrapper in `scripts/` (`devlore.sh`, `compile.sh`, `query.sh`, `verify.sh`, `status.sh`, `update.sh`, `recheck.sh` — venv-direct so they work under Obsidian's minimal GUI shell, which has no `uv` on PATH). The install/refresh path is shared by `init_kb --with-obsidian` and the `devlore obsidian` command via `scripts/obsidian_setup.install_obsidian_layer` (one source of truth for the copy + `__DEVLORE_HOME__` rewrite + `app.json`).
+
+- **Adding it after opting out:** `devlore obsidian` installs/refreshes the layer into the current KB, sourcing the plugin bytes from the distribution cache (`~/.devlore/dist`) so a never-opted-in KB still works. `devlore update` refreshes the plugin too, but only for KBs that already have an `.obsidian/` directory.
+- **Activation (new users must do this once):** Obsidian disables third-party plugins until trusted — open the KB as a vault, Settings → Community plugins → turn off Restricted mode (trust author), then toggle `devlore` on. `devlore obsidian` and `init_kb --with-obsidian` both print these steps (`obsidian_setup.activation_steps`).
 
 ### Scaling Beyond Index-Guided Retrieval
 

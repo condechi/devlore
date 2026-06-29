@@ -1,9 +1,9 @@
 {
   "id": "devlore",
   "name": "devlore",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minAppVersion": "1.0.0",
-  "description": "devlore side panel: ingest notes, compile the KB, ask questions. Single-purpose: only ever runs scripts in the KB directory — not a general command runner.",
+  "description": "devlore side panel: ingest notes, compile the KB, ask questions, verify trust gates, check status, and refresh the machinery. Single-purpose: only ever runs devlore's own scripts in the KB directory — not a general command runner.",
   "author": "devlore contributors",
   "authorUrl": "https://github.com/condechi/devlore",
   "isDesktopOnly": true

@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from capture_gate import should_capture, get_limits
+from capture_gate import should_capture, get_limits, resolve_worktree
 
 # Recursion guard
 if os.environ.get("CLAUDE_INVOKED_BY"):
@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / "scripts"
 STATE_DIR = SCRIPTS_DIR
 sys.path.insert(0, str(SCRIPTS_DIR))
-from transcripts import iter_transcript_turns, parse_iso  # noqa: E402
+from transcripts import extract_delta, parse_iso  # noqa: E402
 
 logging.basicConfig(
     filename=str(SCRIPTS_DIR / "flush.log"),
@@ -55,53 +55,29 @@ def load_last_ts(session_id: str):
     return None
 
 
-def extract_conversation_context(transcript_path: Path, session_id: str) -> tuple[str, int, str, int]:
-    """Delta capture: collect every user/assistant text turn since this session's
-    last saved timestamp, so nothing between widely-spaced saves is lost. Falls
-    back to the last MAX_TURNS turns when there is no marker yet (first flush).
-    Returns (context, kept_turn_count, high_water_iso, deferred_turn_count)."""
-    last_ts = load_last_ts(session_id)
-    turns: list[tuple] = []  # (timestamp_or_None, text)
-
-    for turn in iter_transcript_turns(transcript_path):
-        label = "User" if turn.role == "user" else "Assistant"
-        turns.append((turn.timestamp, f"**{label}:** {turn.text}\n"))
-
-    if last_ts is not None:
-        # Include turns newer than the last save; a turn with no timestamp is
-        # kept (conservative — better a rare re-capture than a silent loss).
-        delta = [t for t in turns if t[0] is None or t[0] > last_ts]
-    else:
-        delta = turns[-MAX_TURNS:]
-
-    # Roll-forward cap: keep the OLDEST turns that fit in DELTA_CAP_CHARS and
-    # DEFER the newer overflow to the next flush. The high-water marker advances
-    # only over what we KEEP, so the deferred turns are > the marker and get
-    # captured next time — nothing is lost (vs the old "keep newest, drop oldest"
-    # which stranded the oldest behind the marker forever). PreCompact always has
-    # a next flush (the session continues, and SessionEnd captures the tail).
-    kept, total, deferred = [], 0, 0
-    for i, (ts, text) in enumerate(delta):
-        if kept and total + len(text) > DELTA_CAP_CHARS:
-            deferred = len(delta) - i
-            break
-        kept.append((ts, text))
-        total += len(text)
-
-    high_water = None
-    for ts, _ in kept:
-        if ts and (high_water is None or ts > high_water):
-            high_water = ts
-    high_water_iso = high_water.isoformat() if high_water else ""
-
-    context = "\n".join(text for _, text in kept)
+def extract_conversation_context(transcript_path: Path, session_id: str) -> tuple[str, int, str, int, int]:
+    """Delta capture since this session's last save (see transcripts.extract_delta).
+    PreCompact applies the roll-forward char cap (keep oldest that fit, DEFER the
+    newer overflow to the next flush) and — like SessionEnd — reports first-flush
+    `truncated` so a capture that races past MAX_TURNS before any save leaves a
+    visible recovery breadcrumb instead of dropping the oldest turns silently.
+    Returns (context, kept_turn_count, high_water_iso, deferred, truncated)."""
+    context, kept, high_water_iso, deferred, truncated = extract_delta(
+        transcript_path, load_last_ts(session_id),
+        max_turns=MAX_TURNS, cap_chars=DELTA_CAP_CHARS,
+    )
     if deferred:
         logging.info(
             "Capture capped at %d chars: kept %d turn(s), DEFERRED %d to the next flush",
-            DELTA_CAP_CHARS, len(kept), deferred,
+            DELTA_CAP_CHARS, kept, deferred,
         )
-
-    return context, len(kept), high_water_iso, deferred
+    if truncated:
+        logging.info(
+            "FIRST flush (no marker) at compaction: kept most recent %d turns, "
+            "TRUNCATED %d earlier turn(s) — reported to flush.py for a recovery breadcrumb",
+            MAX_TURNS, truncated,
+        )
+    return context, kept, high_water_iso, deferred, truncated
 
 
 def main() -> None:
@@ -140,7 +116,7 @@ def main() -> None:
 
     # Extract conversation context in the hook (delta since last save)
     try:
-        context, turn_count, high_water_iso, deferred = extract_conversation_context(transcript_path, session_id)
+        context, turn_count, high_water_iso, deferred, truncated = extract_conversation_context(transcript_path, session_id)
     except Exception as e:
         logging.error("Context extraction failed: %s", e)
         return
@@ -172,9 +148,15 @@ def main() -> None:
         session_id,
         high_water_iso or "none",
         str(deferred),
+        str(truncated),     # first-flush truncation — earlier turns hidden from backfill
     ]
 
     creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+    # Tell flush.py which codebase this session ran in (worktree-resolved), so the
+    # daily entry it writes is tagged with its source project.
+    flush_env = {**os.environ,
+                 "DEVLORE_CAPTURE_PROJECT": Path(resolve_worktree(cwd)).name if cwd else ""}
 
     try:
         subprocess.Popen(
@@ -182,6 +164,7 @@ def main() -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=creation_flags,
+            env=flush_env,
         )
         logging.info("Spawned flush.py for session %s (%d turns, %d chars)", session_id, turn_count, len(context))
     except Exception as e:

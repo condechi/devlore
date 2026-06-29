@@ -107,6 +107,21 @@ project-slug-first **frontmatter tags** for Obsidian, **git-worktree capture**
 recall, and backfill), and **owning-KB routing** so a bare `devlore add` finds
 the right knowledge base when several are installed.
 
+### 5. Fire-and-forget capture
+
+The delta-marker work made the compiler process exactly what was new — but only
+*after* a session's first flush, which fired on compaction or exit. A long
+session that did neither captured nothing, and its eventual first flush kept only
+the most recent `max_turns` turns, hiding the rest behind the very marker it
+wrote (the "first-flush footgun"). v0.9.16 closed that gap with a Claude `Stop`
+hook that fires the first flush **automatically** once a session reaches
+`bootstrap_turns` (default 45), with a safety valve for sessions that run long
+without compacting. Capture stopped asking the developer to exit and wait;
+PreCompact's first-flush truncation also became visible instead of silent.
+(Codex already captured every turn through its `Stop` event, so the gap was
+Claude-Code-only.) The same release auto-excluded code-root symlinks from the
+KB's own git and tagged each daily entry with its source project.
+
 ## The lineage, in one line
 
 coleam00's claude-memory-compiler (installed May 22, 2026) → heavily adapted

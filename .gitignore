@@ -11,9 +11,11 @@ __pycache__/
 .venv/
 
 # Symlinks to external repos — never track or recurse into these
-# (they are their own git repos; this repo references them for convenience)
-crm
-metadata
+# (they are their own git repos; this repo references them for convenience).
+# NOTE: code-root symlinks created by `devlore add`/`init` are NOT listed here —
+# they are per-KB and machine-specific, so they live in the LOCAL, update-safe
+# .git/info/exclude (see scripts/utils.py:git_exclude). This dist-managed file is
+# overwritten wholesale by `devlore update`, so names here must be KB-agnostic.
 claude-config
 
 # Runtime noise (regenerated; NOT part of the auditable KB).
@@ -25,6 +27,8 @@ scripts/compile.status.json
 scripts/last-flush.json
 scripts/session-flush-*
 scripts/flush-context-*
+scripts/stop-context-*
+scripts/stop-spawn-*
 scripts/activity.jsonl
 scripts/*.bak*
 scripts/__pycache__/

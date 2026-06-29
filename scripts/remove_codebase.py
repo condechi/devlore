@@ -104,9 +104,12 @@ def unwire_code(codebase: Path) -> None:
     """Remove the code link: the KB-root symlink + its code-roots entry."""
     names = [p.name for p in KB.iterdir()
              if p.is_symlink() and p.resolve() == codebase.resolve()]
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from utils import git_exclude
     for name in names:
         (KB / name).unlink()
         n = _strip_lines(SCRIPTS / "code-roots", {name})
+        git_exclude(KB, name, add=False)
         print(f"  ✓ code link removed (symlink {name}"
               + (" + code-roots entry)" if n else "; no code-roots entry)"))
     if not names:

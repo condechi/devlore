@@ -1,17 +1,35 @@
-# Capture sizing — how much of a session each flush captures.
-# Edit the values and start a new session to apply (no code changes needed).
+# Capture sizing — how much of a session each flush captures, and when.
+# Edit the values; changes take effect on the NEXT captured session event
+# (each hook is a fresh process that re-reads this file — no restart needed).
 #
 # Delta capture means a flush already grabs everything since the last save;
 # these knobs bound that:
 #
-#   max_turns    The FIRST flush of a session (before any save) grabs this many
-#                recent turns. Also the "window" the status line counts against
-#                (it warns as turns-since-save approaches this).
-#   max_chars    Hard cap on a single flush's captured text. A larger span is
-#                trimmed to the most recent this-many characters, then chunked.
-#                Raise this if you compact very rarely and want bigger captures.
-#   chunk_chars  Size of each chunk sent to the summarizer for big captures.
+#   bootstrap_turns  The Stop hook auto-fires the FIRST flush once a session
+#                    reaches this many turns — so the delta marker is set early
+#                    and nothing is lost while you wait for a compaction or exit.
+#                    This is what makes capture fire-and-forget: you should never
+#                    have to exit or wait for a flush. Set 0 to DISABLE the
+#                    bootstrap (capture then reverts to PreCompact + SessionEnd
+#                    only, and the first-flush footgun returns). Tuning:
+#                      - lower (e.g. 25) = capture sooner, more first-flush cost
+#                      - higher (e.g. 60-80) = let more of a session's early
+#                        architectural decisions settle before the first save
+#                    Keep it WELL BELOW max_turns so the bootstrap always wins
+#                    the race against the first PreCompact/SessionEnd.
+#   max_turns        The FIRST flush of a session (before any save) grabs at most
+#                    this many recent turns; older turns are truncated (with a
+#                    visible recovery breadcrumb in the daily). Also the "window"
+#                    the status line counts against, and the Stop hook's
+#                    safety-valve threshold: if a session ever reaches this many
+#                    turns-since-save without compacting, the Stop hook flushes.
+#   max_chars        Hard cap on a single flush's captured text. The roll-forward
+#                    cap keeps the OLDEST turns that fit and DEFERS the newer
+#                    overflow to the next flush (nothing is stranded). Raise this
+#                    if you compact rarely and want bigger bites per flush.
+#   chunk_chars      Size of each chunk sent to the summarizer for big captures.
 
+bootstrap_turns = 45
 max_turns = 120
 max_chars = 50000
 chunk_chars = 45000

@@ -13,7 +13,10 @@ from pathlib import Path
 CONFIG_FILE = Path(__file__).resolve().parent / "capture-config"
 
 DEFAULTS = {
-    "max_turns": 120,          # fallback first-flush turn window; status-line window
+    "max_turns": 120,          # fallback first-flush turn window; status-line window;
+                               #   Stop-hook safety-valve threshold (turns-since-save)
+    "bootstrap_turns": 45,     # Stop hook: auto-fire the FIRST flush once a session
+                               #   reaches this many turns (0 disables the bootstrap)
     "max_chars": 50000,        # hard cap on a single flush's captured text
     "chunk_chars": 45000,      # summarizer chunk size for big captures
     "compile_chunk_chars": 40000,  # max daily-log content per compile pass (entry-aligned)

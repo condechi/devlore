@@ -142,6 +142,67 @@ def transcript_session_id(transcript_path: Path) -> str:
     return transcript_path.stem
 
 
+def extract_delta(
+    transcript_path: Path,
+    last_ts: datetime | None,
+    *,
+    max_turns: int,
+    cap_chars: int | None = None,
+) -> tuple[str, int, str, int, int]:
+    """Delta capture shared by every capture hook (pre-compact, session-end, stop).
+
+    Collects the user/assistant text turns to flush, given this session's
+    last-save high-water timestamp `last_ts`:
+      - last_ts set  -> every turn newer than it (a turn with no timestamp is
+                        kept: better a rare re-capture than a silent loss).
+      - last_ts None -> FIRST flush, no marker yet: the most recent `max_turns`
+                        turns. Older turns are reported as `truncated` — they are
+                        NOT captured and, because the flush that follows writes
+                        the marker, are hidden from plain backfill too (recover
+                        with `devlore backfill --session <id> --force`).
+
+    `cap_chars` (when set) applies the roll-forward cap: keep the OLDEST turns
+    that fit in cap_chars and DEFER the newer overflow to the next flush. The
+    high-water marker advances only over what is KEPT, so deferred turns stay
+    > the marker and get captured next time — nothing is stranded. Pass None
+    (session-end's last-chance flush) to take the whole delta uncapped; flush.py
+    still chunks it.
+
+    Returns (context, kept_turn_count, high_water_iso, deferred, truncated).
+    """
+    turns: list[tuple[datetime | None, str]] = []
+    for turn in iter_transcript_turns(transcript_path):
+        label = "User" if turn.role == "user" else "Assistant"
+        turns.append((turn.timestamp, f"**{label}:** {turn.text}\n"))
+
+    truncated = 0
+    if last_ts is not None:
+        delta = [t for t in turns if t[0] is None or t[0] > last_ts]
+    else:
+        delta = turns[-max_turns:]
+        truncated = max(0, len(turns) - max_turns)
+
+    if cap_chars is None:
+        kept, deferred = delta, 0
+    else:
+        kept, total, deferred = [], 0, 0
+        for i, (ts, text) in enumerate(delta):
+            if kept and total + len(text) > cap_chars:
+                deferred = len(delta) - i
+                break
+            kept.append((ts, text))
+            total += len(text)
+
+    high_water = None
+    for ts, _ in kept:
+        if ts and (high_water is None or ts > high_water):
+            high_water = ts
+    high_water_iso = high_water.isoformat() if high_water else ""
+
+    context = "\n".join(text for _, text in kept)
+    return context, len(kept), high_water_iso, deferred, truncated
+
+
 def transcript_dialogue(transcript_path: Path) -> tuple[str, str, str]:
     """Return (dialogue, first_date, last_iso) for user/assistant text turns."""
     turns: list[str] = []

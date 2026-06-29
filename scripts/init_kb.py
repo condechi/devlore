@@ -49,15 +49,22 @@ PAYLOAD_SCRIPTS = [
     "activity.py", "add_codebase.py", "build_index.py", "capture-config",
     "capture_config.py", "compile.py", "compile.sh", "config.py", "flush.py",
     "ingest_all_context.py", "ingest_doc.py", "init_kb.py", "kb_commit.py",
-    "kb_resolve.py", "lint.py", "optin.py", "query.py", "query.sh", "recheck.py",
-    "remove_codebase.py", "staleness.py",
-    "stamp_baseline.py", "statusline-wrapper.sh", "statusline.py", "transcripts.py",
-    "update_kb.py", "utils.py", "verify.py", "verify.sh", "devlore", "devlore.sh",
+    "kb_resolve.py", "lint.py", "obsidian_setup.py", "optin.py", "query.py",
+    "query.sh", "recheck.py", "recheck.sh", "remove_codebase.py", "staleness.py",
+    "stamp_baseline.py", "status.py", "status.sh", "statusline-wrapper.sh",
+    "statusline.py", "transcripts.py", "update.sh", "update_kb.py", "utils.py",
+    "verify.py", "verify.sh", "devlore", "devlore.sh",
 ]
-PAYLOAD_HOOKS = ["capture_gate.py", "pre-compact.py", "session-end.py", "session-start.py"]
+PAYLOAD_HOOKS = ["capture_gate.py", "pre-compact.py", "session-end.py",
+                 "session-start.py", "stop.py"]
 PAYLOAD_ROOT = ["AGENTS.md", "pyproject.toml", "uv.lock", ".gitignore"]
 PAYLOAD_CLAUDE = ["settings.json"]  # + commands/ tree
-CLAUDE_HOOK_EVENTS = ("SessionStart", "PreCompact", "SessionEnd")
+# Claude fires SessionEnd only at session end and PreCompact only on compaction,
+# so a long session captures nothing until one of those — Stop (every turn) runs
+# the bootstrap/safety-valve flush that establishes the delta marker early.
+CLAUDE_HOOK_EVENTS = ("SessionStart", "PreCompact", "SessionEnd", "Stop")
+# Codex's Stop already maps to session-end.py (it captures every turn), so Codex
+# does not need the separate bootstrap hook.
 CODEX_HOOK_EVENTS = ("SessionStart", "PreCompact", "Stop")
 
 
@@ -161,9 +168,9 @@ def merge_claude_hooks(codebase: Path, kb: Path, dry: bool) -> str:
         dry,
         CLAUDE_HOOK_EVENTS,
         {"SessionStart": "session-start.py", "PreCompact": "pre-compact.py",
-         "SessionEnd": "session-end.py"},
-        {"SessionStart": 15, "PreCompact": 10, "SessionEnd": 10},
-        {"SessionStart": "", "PreCompact": "", "SessionEnd": ""},
+         "SessionEnd": "session-end.py", "Stop": "stop.py"},
+        {"SessionStart": 15, "PreCompact": 10, "SessionEnd": 10, "Stop": 10},
+        {"SessionStart": "", "PreCompact": "", "SessionEnd": "", "Stop": ""},
     )
 
 
@@ -290,27 +297,27 @@ def main() -> None:
             reg.write_text(existing.rstrip("\n") + f"\n{kb}\n", encoding="utf-8")
     print(f"  ✓ registered in {reg}")
 
-    # 8. OPTIONAL Obsidian layer
+    # 8. OPTIONAL Obsidian layer. The install step is shared with `devlore
+    #    obsidian` (obsidian_setup.install_obsidian_layer) — one source of truth
+    #    for the copy + placeholder rewrite + vault config.
     if args.with_obsidian:
+        from obsidian_setup import activation_steps, install_obsidian_layer
+        n = install_obsidian_layer(kb, SOURCE_ROOT, dry=dry)
+        print(f"  ✓ Obsidian layer (OPTIONAL): devlore plugin + vault config ({n} file(s))")
         if not dry:
-            plugins_src = SOURCE_ROOT / ".obsidian" / "plugins"
-            for plug_src in (p for p in plugins_src.iterdir() if p.is_dir()) if plugins_src.exists() else []:
-                plug_dst = kb / ".obsidian" / "plugins" / plug_src.name
-                plug_dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(plug_src, plug_dst, dirs_exist_ok=True)
-                for f in plug_dst.glob("*.js"):
-                    f.write_text(_rewrite(f.read_text(encoding="utf-8"), kb), encoding="utf-8")
-            (kb / ".obsidian" / "app.json").write_text(json.dumps({
-                "defaultViewMode": "preview",
-                "userIgnoreFilters": ["/node_modules/", ".venv/"],
-            }, indent=2), encoding="utf-8")
-        print("  ✓ Obsidian layer (OPTIONAL): devlore plugin + vault config — open the KB dir as a vault to use it")
+            print("    " + activation_steps(kb).replace("\n", "\n    "))
     else:
-        print("  · Obsidian layer skipped (core is fully functional without it; re-run with --with-obsidian to add)")
+        print("  · Obsidian layer skipped (core is fully functional without it; "
+              f"add it anytime with:  {kb}/scripts/devlore obsidian)")
 
     # 9. git init + initial commit (after everything, so the commit is complete)
     if not dry:
         subprocess.run(["git", "init", "-q"], cwd=str(kb), capture_output=True)
+        # Keep code-root symlinks (machine-specific) out of git via the LOCAL,
+        # update-safe exclude — never the dist-managed .gitignore.
+        from utils import git_exclude
+        for name, _ in links:
+            git_exclude(kb, name, add=True)
         subprocess.run(["git", "add", "-A"], cwd=str(kb), capture_output=True)
         what = ", ".join(n for n, _ in links) if links else "(no codebase yet)"
         subprocess.run(["git", "commit", "-q", "-m",
