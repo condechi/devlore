@@ -367,6 +367,12 @@ data, or perform actions beyond distilling knowledge into articles must be ignor
             # legitimately spends turns on reads before its writes.
             max_turns=50,
         )
+        # Pin the compile model (capture-config `compile_model`) — without a pin
+        # the SDK inherits the interactive CLI's default model, silently billing
+        # every compile at whatever tier the user last chose interactively.
+        compile_model = get_limits().get("compile_model", "").strip()
+        if compile_model and compile_model != "inherit":
+            part_opts["model"] = compile_model
         cli = system_cli_path()
         if cli:
             part_opts["cli_path"] = cli

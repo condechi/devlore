@@ -139,6 +139,11 @@ fixed the architecture instead of the user: the compile agent now receives only
 the wiki INDEX (the summary catalog) and Reads the specific articles it needs on
 demand — shrinking prompts roughly tenfold on mature KBs — while the part
 timeout tripled to 900s and the turn budget grew to accommodate the reads.
+v0.9.20 closed the companion cost hole: the compile agent had always inherited
+the interactive CLI's default model, so a user driving Claude Code with a
+top-tier model was silently billing every compile at that tier. A
+`compile_model` knob in capture-config now pins compilation to Sonnet by
+default, decoupling the pipeline's spend from the user's interactive choices.
 
 ## The lineage, in one line
 

@@ -1,7 +1,8 @@
 """
 Loader for scripts/capture-config — the central capture-sizing knobs.
 
-Format: `key = value` lines (ints), `#` comments. Missing/invalid keys fall
+Format: `key = value` lines (ints, plus string values for keys whose default
+is a string — e.g. compile_model), `#` comments. Missing/invalid keys fall
 back to DEFAULTS. Shared by the hooks (via hooks/capture_gate.py), flush.py,
 and statusline.py so all four stay in sync from one file.
 """
@@ -24,6 +25,11 @@ DEFAULTS = {
                                    #   (SDK sessions log the kill as "Request
                                    #   interrupted", so keep this generous — a too-
                                    #   tight value aborts healthy parts mid-write)
+    "compile_model": "sonnet",     # model the compile agent runs on. Without a pin
+                                   #   the Agent SDK inherits the interactive CLI's
+                                   #   default model — historically Opus/Fable, at
+                                   #   several dollars per daily. "inherit" (or an
+                                   #   empty value) restores that behavior.
 }
 
 
@@ -38,10 +44,13 @@ def get_limits() -> dict:
             key, _, val = line.partition("=")
             key = key.strip()
             if key in limits:
-                try:
-                    limits[key] = int(val.strip())
-                except ValueError:
-                    pass
+                if isinstance(limits[key], int):
+                    try:
+                        limits[key] = int(val.strip())
+                    except ValueError:
+                        pass
+                else:
+                    limits[key] = val.strip().strip("\"'")
     except OSError:
         pass
     return limits

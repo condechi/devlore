@@ -40,6 +40,14 @@ chunk_chars = 45000
 # keeps the compile prompt from overflowing the model's context window.
 compile_chunk_chars = 40000
 
+# compile_model: the model the compile agent runs on (haiku | sonnet | opus, or a
+# full model id). Without a pin the Agent SDK inherits the interactive CLI's
+# default model — if you drive Claude Code with a top-tier model, every compile
+# silently bills at that tier (historically several dollars per daily). Sonnet is
+# the right default for technical distillation; use "inherit" (or empty) to
+# follow the CLI default again.
+compile_model = sonnet
+
 # compile_part_timeout: seconds before a hung compile part is abandoned (so one
 # stuck API/CLI call can't block the whole compile forever). The part is marked
 # failed and the daily is retried on the next compile. Keep this generous: the
