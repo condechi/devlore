@@ -337,8 +337,13 @@ def collect_markdown_docs(root: Path, recursive: bool = False) -> tuple[list[Pat
 # ── Wikilink helpers ──────────────────────────────────────────────────
 
 def extract_wikilinks(content: str) -> list[str]:
-    """Extract all [[wikilinks]] from markdown content."""
-    return re.findall(r"\[\[([^\]]+)\]\]", content)
+    """Extract the TARGET of every [[wikilink]] in markdown content.
+
+    Obsidian links may carry a display alias ([[target|shown text]]) and/or a
+    heading anchor ([[target#Section]]); both are stripped so callers always get
+    the bare article path the link resolves to."""
+    return [raw.split("|")[0].split("#")[0].strip()
+            for raw in re.findall(r"\[\[([^\]]+)\]\]", content)]
 
 
 def wiki_article_exists(link: str) -> bool:
@@ -390,13 +395,14 @@ def list_raw_files() -> list[Path]:
 # ── Index helpers ─────────────────────────────────────────────────────
 
 def count_inbound_links(target: str, exclude_file: Path | None = None) -> int:
-    """Count how many wiki articles link to a given target."""
+    """Count how many wiki articles link to a given target (aliased and
+    anchored links — [[target|alias]], [[target#heading]] — count too)."""
     count = 0
     for article in list_wiki_articles():
         if article == exclude_file:
             continue
         content = article.read_text(encoding="utf-8")
-        if f"[[{target}]]" in content:
+        if target in extract_wikilinks(content):
             count += 1
     return count
 

@@ -126,7 +126,8 @@ def check_missing_backlinks() -> list[dict]:
             target_path = KNOWLEDGE_DIR / f"{link}.md"
             if target_path.exists():
                 target_content = target_path.read_text(encoding="utf-8")
-                if f"[[{source_link}]]" not in target_content:
+                # Compare link TARGETS, so an aliased backlink ([[a|text]]) counts.
+                if source_link not in extract_wikilinks(target_content):
                     issues.append({
                         "severity": "suggestion",
                         "check": "missing_backlink",
