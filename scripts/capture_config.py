@@ -20,7 +20,10 @@ DEFAULTS = {
     "max_chars": 50000,        # hard cap on a single flush's captured text
     "chunk_chars": 45000,      # summarizer chunk size for big captures
     "compile_chunk_chars": 40000,  # max daily-log content per compile pass (entry-aligned)
-    "compile_part_timeout": 300,   # seconds before a hung compile part is abandoned
+    "compile_part_timeout": 900,   # seconds before a hung compile part is abandoned
+                                   #   (SDK sessions log the kill as "Request
+                                   #   interrupted", so keep this generous — a too-
+                                   #   tight value aborts healthy parts mid-write)
 }
 
 

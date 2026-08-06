@@ -122,6 +122,24 @@ PreCompact's first-flush truncation also became visible instead of silent.
 Claude-Code-only.) The same release auto-excluded code-root symlinks from the
 KB's own git and tagged each daily entry with its source project.
 
+### 6. The compile that interrupted itself
+
+As the founding KB matured past two hundred articles, the compiler's original
+design — inlining the FULL text of every existing article into every compile
+prompt — quietly became its own worst enemy: prompts crossed two million
+characters, some exceeded the model's context window outright ("Prompt is too
+long"), and the rest spent most of the 300-second part budget just ingesting
+context before writing anything. The watchdog then killed those healthy-but-slow
+SDK sessions mid-write, leaving half-written articles and broken wikilinks — and
+logging each kill as "Request interrupted", indistinguishable from a user
+pressing Esc. A usage-insights review in August 2026 blamed the user for
+"aborting" dozens of compile sessions before forensics on the transcripts showed
+every single "interruption" lasted exactly the watchdog's 300 seconds. v0.9.19
+fixed the architecture instead of the user: the compile agent now receives only
+the wiki INDEX (the summary catalog) and Reads the specific articles it needs on
+demand — shrinking prompts roughly tenfold on mature KBs — while the part
+timeout tripled to 900s and the turn budget grew to accommodate the reads.
+
 ## The lineage, in one line
 
 coleam00's claude-memory-compiler (installed May 22, 2026) → heavily adapted

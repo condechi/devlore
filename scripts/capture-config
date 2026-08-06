@@ -42,5 +42,8 @@ compile_chunk_chars = 40000
 
 # compile_part_timeout: seconds before a hung compile part is abandoned (so one
 # stuck API/CLI call can't block the whole compile forever). The part is marked
-# failed and the daily is retried on the next compile.
-compile_part_timeout = 300
+# failed and the daily is retried on the next compile. Keep this generous: the
+# kill aborts a HEALTHY part mid-write too (half-written articles, broken
+# wikilinks), and the aborted SDK session is logged as "Request interrupted" as
+# if a user pressed Esc. 300 proved far too tight once wikis matured.
+compile_part_timeout = 900

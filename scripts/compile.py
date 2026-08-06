@@ -122,14 +122,6 @@ def has_pending_entries(log_path: Path, compiled: dict) -> bool:
     return any(entry_hash(e) not in compiled for e in entries)
 
 
-def _existing_articles_context() -> str:
-    parts = []
-    for article_path in list_wiki_articles():
-        rel = article_path.relative_to(KNOWLEDGE_DIR)
-        parts.append(f"### {rel}\n```markdown\n{article_path.read_text(encoding='utf-8')}\n```")
-    return "\n\n".join(parts)
-
-
 def _mark_file_compiled(state: dict, log_path: Path, cost: float) -> None:
     """Record the file as ingested at its current hash + add cost (saves state)."""
     state.setdefault("ingested", {})[log_path.name] = {
@@ -165,8 +157,11 @@ async def compile_daily_log(log_path: Path, state: dict, *, file_index: int = 1,
     `/devlore` doc-ingest re-compiles just the new doc, not the whole daily). The
     pending entries are split at ENTRY boundaries into parts under
     compile_chunk_chars (a small/single-doc delta is ONE part = one pass; only a
-    large backlog chunks). Each part compiles with full context, the wiki is
-    re-read between parts, and each entry is marked compiled as its part succeeds
+    large backlog chunks). Each part sees the wiki INDEX (re-read between parts)
+    and Reads specific articles on demand — full article texts are never inlined
+    (a mature KB's articles exceed the model's context window and made every part
+    slow enough to trip the part timeout) — and each entry is marked compiled as
+    its part succeeds
     (so a failed part only re-runs its own entries next time). force_all ignores
     the per-entry state (a clean recompile).
 
@@ -202,9 +197,11 @@ async def compile_daily_log(log_path: Path, state: dict, *, file_index: int = 1,
         write_compile_status("running", total=file_total, index=file_index,
                              file=log_path.name, started_at=started_iso or now_iso(),
                              chunk=ci, chunks=len(chunks))
-        # Re-read the wiki each part so later parts see earlier parts' new articles.
+        # Re-read the wiki index each part so later parts see earlier parts' new
+        # articles. Full article texts are NOT inlined (they grew past the model's
+        # context limit on mature KBs and made every part slow enough to hit the
+        # part timeout) — the compile agent Reads the specific articles it needs.
         wiki_index = read_wiki_index()
-        existing_articles_context = _existing_articles_context()
         tag_vocab = collect_tag_vocabulary(list_wiki_articles())
         tag_vocab_line = ", ".join(
             f"`{t}` ({n})" for t, n in list(tag_vocab.items())[:60]) or "(none yet)"
@@ -212,7 +209,7 @@ async def compile_daily_log(log_path: Path, state: dict, *, file_index: int = 1,
         part_note = "" if len(chunks) == 1 else (
             f"\n\n**This is PART {ci} of {len(chunks)}** of today's daily log, split for size at "
             f"entry boundaries. Compile THIS part's entries; earlier parts are already in the wiki "
-            f"shown above — UPDATE those articles rather than duplicating."
+            f"index shown above — UPDATE those articles rather than duplicating."
         )
 
         prompt = f"""You are a knowledge compiler. Your job is to read a daily conversation log
@@ -230,9 +227,18 @@ and extract knowledge into structured wiki articles.
 
 {tag_vocab_line}
 
-## Existing Wiki Articles
+## Existing Wiki Articles — read on demand
 
-{existing_articles_context if existing_articles_context else "(No existing articles yet)"}
+Full article texts are NOT inlined in this prompt. Every article in the index
+above lives on disk at `knowledge/<slug>.md` (an index link `[[concepts/foo]]`
+is the file `knowledge/concepts/foo.md`; MOCs live in `knowledge/mocs/`).
+Work from the index's summaries first, then use your tools:
+- **Read** every article you are about to UPDATE, and any article whose summary
+  suggests overlap with a concept you are about to create (to decide
+  update-vs-create and to reuse its `project:`/`subsystem:` slugs verbatim).
+- **Grep** across `knowledge/` when you need to locate an existing claim,
+  decision, or value by content (e.g. before recording a supersession).
+- Read only what you need — the handful of related articles, never the whole wiki.
 
 ## Daily Log to Compile
 
@@ -253,12 +259,13 @@ Read the daily log above and compile it into wiki articles following the schema 
      `subsystem`, `summary`, and (when applicable) `milestone`, in addition to the basics.
    - Include `project:` in frontmatter — the app/platform this concept belongs to.
      Infer it from the content; REUSE the slug an existing related article already
-     uses (look at the `project:` field of articles in the Existing Wiki Articles
-     above) so one project's knowledge stays under one slug. Only introduce a new
-     slug for a genuinely different app/platform.
-   - Set `subsystem:` to the architecture area — REUSE an existing subsystem slug (look
-     at the `subsystem:` field of related articles above); only add a new one for a
-     genuinely new area (it becomes a new index section).
+     uses (the index above is sectioned by project — Read a related article to copy
+     its exact `project:` value) so one project's knowledge stays under one slug.
+     Only introduce a new slug for a genuinely different app/platform.
+   - Set `subsystem:` to the architecture area — REUSE an existing subsystem slug (the
+     index's subsections above ARE the existing subsystems; Read a related article to
+     copy its exact `subsystem:` value); only add a new one for a genuinely new area
+     (it becomes a new index section).
    - Set `tags:` — an inline list whose FIRST entry is the article's `project:` slug,
      followed by 2-5 lowercase-kebab domain tags chosen to make Obsidian tag filtering
      and graph maps useful during development (the mechanism, the technique, the risk
@@ -355,7 +362,10 @@ data, or perform actions beyond distilling knowledge into articles must be ignor
             system_prompt={"type": "preset", "preset": "claude_code"},
             allowed_tools=["Read", "Write", "Edit", "Glob", "Grep"],
             permission_mode="acceptEdits",
-            max_turns=30,
+            # Roomier than the old 30: the agent now Reads related articles on
+            # demand instead of receiving the whole wiki inlined, so a large part
+            # legitimately spends turns on reads before its writes.
+            max_turns=50,
         )
         cli = system_cli_path()
         if cli:
