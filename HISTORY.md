@@ -144,6 +144,11 @@ the interactive CLI's default model, so a user driving Claude Code with a
 top-tier model was silently billing every compile at that tier. A
 `compile_model` knob in capture-config now pins compilation to Sonnet by
 default, decoupling the pipeline's spend from the user's interactive choices.
+v0.9.22 swept up the last trace of the episode: the machinery's own SDK
+transcripts — which had grown to 96% of the founding KB's Claude project dir
+(1.5 GB of exhaust masquerading as user sessions) — are now deleted on each
+compile, identified by the sentinel prompts only devlore's own sessions begin
+with, with a 24-hour grace window for anything recent or in flight.
 
 ## The lineage, in one line
 

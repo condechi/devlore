@@ -604,6 +604,20 @@ def main():
     except Exception as e:
         print(f"  (index rebuild skipped: {e})")
 
+    # Transcript hygiene: devlore's own SDK sessions (compile/flush/query/verify)
+    # land in the KB's ~/.claude/projects dir like human sessions and come to
+    # dominate it — polluting usage-insights analyses and risking recursive
+    # backfill. Sweep the accumulated exhaust each compile (24h grace keeps
+    # recent/in-flight ones). Best-effort: a failure must not fail the compile.
+    try:
+        from utils import purge_machinery_transcripts
+        np_, nb = purge_machinery_transcripts(ROOT_DIR)
+        if np_:
+            print(f"  Transcript hygiene: removed {np_} machinery transcript(s) "
+                  f"({nb / 1e6:.0f} MB).")
+    except Exception as e:
+        print(f"  (transcript hygiene skipped: {e})")
+
     # Commit strategy: one atomic commit per successful compile (local-only).
     try:
         from kb_commit import kb_commit

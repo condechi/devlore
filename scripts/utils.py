@@ -334,6 +334,88 @@ def collect_markdown_docs(root: Path, recursive: bool = False) -> tuple[list[Pat
     return sorted(kept), excluded
 
 
+# ── Machinery-transcript hygiene ──────────────────────────────────────
+
+# Opening text of the FIRST user prompt of every SDK session devlore itself
+# spawns (compile / flush summarizer / backfill distill / query / tier-3
+# verify). Matched as a PREFIX of the first user message only — an interactive
+# session that merely quotes one of these strings mid-conversation never matches.
+MACHINERY_PROMPT_SENTINELS = (
+    "You are a knowledge compiler",
+    "Review the conversation context below",
+    "You are answering a question from a personal knowledge base",
+    "You are an adversarial code-grounding verifier",
+)
+
+
+def claude_project_dir(root: Path) -> Path:
+    """The ~/.claude/projects/ transcript dir for sessions whose cwd is `root`
+    (Claude Code's own path encoding)."""
+    enc = str(root).replace("/", "-").replace("_", "-").replace(".", "-")
+    return Path.home() / ".claude" / "projects" / enc
+
+
+def _first_user_text(path: Path, max_records: int = 20) -> str:
+    """Text of the first user-role record in a transcript ('' if none early on)."""
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if i > max_records:
+                    break
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if rec.get("type") == "user":
+                    content = rec.get("message", {}).get("content")
+                    if isinstance(content, str):
+                        return content
+                    if isinstance(content, list):
+                        return "".join(b.get("text", "") for b in content
+                                       if isinstance(b, dict))
+                    return ""
+    except OSError:
+        pass
+    return ""
+
+
+def purge_machinery_transcripts(root: Path, grace_hours: int = 24) -> tuple[int, int]:
+    """Delete the Claude Code transcripts of devlore's OWN SDK sessions from
+    `root`'s project dir.
+
+    Every compile/flush/query/verify call spawns a headless Claude session with
+    cwd at the KB root, and its transcript lands in ~/.claude/projects/ exactly
+    like a human session. Left in place they come to dominate the dir (873 of
+    911 files on the founding KB), pollute usage-insights analyses (a compile
+    part killed by the watchdog reads as the USER aborting a session), and are
+    candidates for recursive backfill. They are pure exhaust — their input is
+    the daily+wiki and their output is committed to the wiki — so they are
+    deleted, not archived. Files modified within `grace_hours` are kept (never
+    races an in-flight session; recent ones stay inspectable for debugging).
+    Human transcripts never match: the sentinel must PREFIX the first user
+    message. Returns (files_deleted, bytes_freed).
+    """
+    import time
+
+    proj = claude_project_dir(root)
+    if not proj.is_dir():
+        return 0, 0
+    cutoff = time.time() - grace_hours * 3600
+    n = freed = 0
+    for f in proj.glob("*.jsonl"):
+        try:
+            if f.stat().st_mtime > cutoff:
+                continue
+            if _first_user_text(f).lstrip().startswith(MACHINERY_PROMPT_SENTINELS):
+                size = f.stat().st_size
+                f.unlink()
+                n += 1
+                freed += size
+        except OSError:
+            continue
+    return n, freed
+
+
 # ── Wikilink helpers ──────────────────────────────────────────────────
 
 def extract_wikilinks(content: str) -> list[str]:
