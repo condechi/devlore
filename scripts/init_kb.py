@@ -49,11 +49,12 @@ PAYLOAD_SCRIPTS = [
     "activity.py", "add_codebase.py", "build_index.py", "capture-config",
     "capture_config.py", "compile.py", "compile.sh", "config.py", "flush.py",
     "ingest_all_context.py", "ingest_doc.py", "init_kb.py", "kb_commit.py",
-    "kb_resolve.py", "lint.py", "obsidian_setup.py", "optin.py", "query.py",
-    "query.sh", "recheck.py", "recheck.sh", "remove_codebase.py", "staleness.py",
-    "stamp_baseline.py", "status.py", "status.sh", "statusline-wrapper.sh",
-    "statusline.py", "transcripts.py", "update.sh", "update_kb.py", "utils.py",
-    "verify.py", "verify.sh", "devlore", "devlore.sh",
+    "kb_registry.py", "kb_resolve.py", "lint.py", "obsidian_setup.py",
+    "optin.py", "query.py", "query.sh", "recheck.py", "recheck.sh",
+    "remove_codebase.py", "staleness.py", "stamp_baseline.py", "status.py",
+    "status.sh", "statusline-wrapper.sh", "statusline.py", "transcripts.py",
+    "update.sh", "update_kb.py", "utils.py", "verify.py", "verify.sh",
+    "devlore", "devlore.sh",
 ]
 PAYLOAD_HOOKS = ["capture_gate.py", "pre-compact.py", "session-end.py",
                  "session-start.py", "stop.py"]
@@ -288,7 +289,13 @@ def main() -> None:
         print(f"  {'✓' if r.returncode == 0 else '⚠'} uv sync "
               f"({'ok' if r.returncode == 0 else r.stderr.strip()[:120]})")
 
-    # 7. multi-KB registry (owning-KB routing + status-line dispatch)
+    # 7. multi-KB registry (owning-KB routing + status-line dispatch).
+    #    Two files in parallel:
+    #      ~/.devlore/kb-dirs    — flat paths (legacy readers: kb_resolve.py,
+    #                              statusline-wrapper.sh)
+    #      ~/.devlore/registry.json — named KBs + descriptions (kb_registry.py
+    #                              list/use/which; cwd-decoupling uses the
+    #                              `path` here to find the entry by cwd)
     from utils import kb_dirs_registry
     reg = kb_dirs_registry()
     if not dry:
@@ -297,7 +304,22 @@ def main() -> None:
             "# status-line dispatch). Managed by devlore init; safe to hand-edit.\n"
         if str(kb) not in existing:
             reg.write_text(existing.rstrip("\n") + f"\n{kb}\n", encoding="utf-8")
-    print(f"  ✓ registered in {reg}")
+        # Named registry: register by directory basename; bootstrap from the
+        # legacy flat file if it doesn't exist yet (handles first init after
+        # this code lands). If this is the user's only KB, it's the default.
+        from kb_registry import (
+            _bootstrap_registry_from_kb_dirs,
+            get_default,
+            list_kbs,
+            register_kb,
+            set_default,
+        )
+        _bootstrap_registry_from_kb_dirs()
+        register_kb(name=kb.name, path=kb,
+                    description=f"devlore KB (initialized {now_iso()})")
+        if get_default() is None and len(list_kbs()) == 1:
+            set_default(kb.name)
+    print(f"  ✓ registered in {reg} + ~/.devlore/registry.json")
 
     # 8. OPTIONAL Obsidian layer. The install step is shared with `devlore
     #    obsidian` (obsidian_setup.install_obsidian_layer) — one source of truth

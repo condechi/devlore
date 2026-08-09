@@ -154,7 +154,18 @@ multi-KB registry from `~/.claude/kb-dirs` to the harness-agnostic
 `~/.devlore/kb-dirs` (auto-migrated on first touch — devlore captures Codex as
 well as Claude Code, and its own state belongs in its own home), and scrubbed
 the last founding-KB repo names out of the tier-3 verifier's prompt, which now
-derives its repo list from `scripts/code-roots` like everything else.
+derives its repo list from `scripts/code-roots` like everything else. v0.9.24
+uncoupled the dispatcher from its KB: `devlore` no longer needs to be run from
+inside a KB. A new `~/.devlore/registry.json` adds named KBs (the flat
+`kb-dirs` file stays for legacy routing and the status line), and
+`~/.devlore/state.json` holds a per-user default KB. The new subcommands are
+`devlore` (lists KBs), `devlore use <name>` (sets default), `devlore which`
+(prints the resolved KB for cwd). Read commands (`ask`, `status`, `compile`,
+`verify`, `recheck`, `docs`, `backfill`, `obsidian`) route through cwd
+detection first, the default KB second, and re-exec the resolved KB's
+launcher transparently. `--kb <name>` is now a peer of the existing `--kb
+<path>`. A first-detection prompt offers to register any KB the user is
+standing in; declines are remembered so the launcher never nags.
 
 ## The lineage, in one line
 
