@@ -52,6 +52,8 @@ import tarfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+# Shared machinery lives at ~/.devlore/lib/ (v0.9.25+).
+sys.path.insert(0, str(Path.home() / ".devlore" / "lib"))
 
 from capture_config import get_limits  # noqa: E402
 from config import DAILY_DIR, KNOWLEDGE_DIR, now_iso, system_cli_path  # noqa: E402

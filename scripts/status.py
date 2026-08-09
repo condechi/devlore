@@ -11,6 +11,7 @@ terminal reaches the same view via `devlore status`.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -99,11 +100,17 @@ def main() -> None:
         for line in log.splitlines():
             print(f"    {line}")
 
-    # Tier-2 staleness preview (deterministic, no cost). Same interpreter we run
-    # under, so it works from the venv (status.sh) and from uv (devlore status).
+    # Tier-2 staleness preview (deterministic, no cost). staleness.py moved to
+    # ~/.devlore/lib/ in v0.9.25; fall back to that path when the KB-local copy
+    # no longer exists. We also inject PYTHONPATH so staleness.py's own imports
+    # resolve.
+    script_path = KB / "scripts" / "staleness.py"
+    if not script_path.exists():
+        script_path = Path.home() / ".devlore" / "lib" / "staleness.py"
     try:
-        out = subprocess.run([sys.executable, str(KB / "scripts" / "staleness.py")],
-                             capture_output=True, text=True, timeout=90)
+        env = {**os.environ, "PYTHONPATH": str(Path.home() / ".devlore" / "lib")}
+        out = subprocess.run([sys.executable, str(script_path)],
+                             capture_output=True, text=True, timeout=90, env=env)
         for line in (out.stdout or "").strip().splitlines()[:3]:
             print(line)
     except (OSError, subprocess.SubprocessError):

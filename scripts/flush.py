@@ -30,6 +30,14 @@ SCRIPTS_DIR = ROOT / "scripts"
 STATE_FILE = SCRIPTS_DIR / "last-flush.json"
 LOG_FILE = SCRIPTS_DIR / "flush.log"
 
+# Shared machinery lives at ~/.devlore/lib/ (v0.9.25+). Add both <kb>/scripts
+# (for any KB-local helpers) and the shared lib (for capture_config, config,
+# transcripts, etc.). Invoked by hooks as `uv run --directory <kb> python
+# flush.py …` with no PYTHONPATH, so this is the only reliable way to find
+# the shared modules.
+sys.path.insert(0, str(SCRIPTS_DIR))
+sys.path.insert(0, str(Path.home() / ".devlore" / "lib"))
+
 # Delta capture: a since-last-save delta can be large (a long session compacted
 # at hundreds of K tokens). Split it into context-sized chunks so each flush LLM
 # call stays bounded, then summarize each. MAX_CHUNKS caps cost on pathological
