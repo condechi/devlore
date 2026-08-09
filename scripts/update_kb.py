@@ -309,7 +309,10 @@ def main() -> None:
     # update-safe .git/info/exclude — not the dist-managed .gitignore (which this
     # very step just overwrote). Sync every current code root so a later `git add`
     # never tracks them, regardless of what the template .gitignore carries.
-    sys.path.insert(0, str(kb / "scripts"))
+    # The shared `utils` module post-v0.9.25 lives at ~/.devlore/lib/, so import
+    # it from there (the launcher injects PYTHONPATH, but let's be explicit so
+    # a stray `python3 update_kb.py` invocation also works).
+    sys.path.insert(0, str(Path.home() / ".devlore" / "lib"))
     from utils import git_exclude
     cr = kb / "scripts" / "code-roots"
     if cr.exists():
