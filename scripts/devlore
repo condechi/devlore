@@ -53,11 +53,27 @@ VER="${VER:-dev}"
 # (those are the only subcommands that accept `--kb` — query/compile/etc.
 # would reject the rewrite with argparse errors).
 
+# Strip `--kb <value>` from $@. The cwd-decoupling pre-pass below inspects
+# $@ for `--kb` to decide routing; the routed KB's launcher must NOT see
+# `--kb` because the underlying Python scripts (query.py, status.py, …)
+# don't accept it. So we expose a helper used in BOTH places, and also by
+# the add/remove branches (which DO accept `--kb` but want `--kb <name>` to
+# resolve to a path BEFORE they run).
+_strip_kb() {
+  _out=()
+  _sn=0
+  for _a in "$@"; do
+    if [ "$_sn" = "1" ]; then _sn=0; continue; fi
+    if [ "$_a" = "--kb" ]; then _sn=1; continue; fi
+    _out+=("$_a")
+  done
+}
+
 cmd="${1:-list}"
 # Cwd-decoupling pre-pass for read commands. Runs once at the top so each
 # READ_CMDS branch below (status, ask, compile, …) doesn't need its own copy.
-# Skipped for add/remove/update/init/obsidian-when-KB-local — those have their
-# own routing via kb_resolve.py or are inherently KB-bound.
+# Skipped for add/remove/update/init — those have their own routing via
+# kb_resolve.py or are inherently KB-bound.
 case "$cmd" in
   ask|status|compile|verify|recheck|docs|backfill|obsidian)
     PY kb_registry.py maybe-prompt --cwd "$PWD" --self "$KB" || true
@@ -70,7 +86,8 @@ case "$cmd" in
     resolved="$(PY kb_registry.py resolve --cwd "$PWD" --explicit "$explicit" 2>/dev/null | tail -n1)"
     if [ -n "$resolved" ] && [ "$resolved" != "$KB" ]; then
       echo "→ routing to: $resolved"
-      exec "$resolved/scripts/devlore" "$@"
+      _strip_kb "$@"
+      exec "$resolved/scripts/devlore" "${_out[@]}"
     fi
     ;;
 esac
@@ -88,9 +105,11 @@ case "$cmd" in
     PY kb_registry.py resolve --cwd "$PWD" --explicit ""
     exit 0
     ;;
-  add)        # `--kb <name>` resolution for add/remove only (query/compile/etc.
-              # don't accept `--kb` — their argparse would reject the rewrite).
-              _add_args=("${@:2}")
+  add)        # `--kb <name>` resolution for add/remove only (the cwd-decoupling
+              # pre-pass above doesn't rewrite for them). Map the name → path
+              # BEFORE add_codebase.py sees it.
+              _strip_kb "${@:2}"
+              _add_args=("${_out[@]}")
               for ((_i = 0; _i < ${#_add_args[@]}; _i++)); do
                 if [ "${_add_args[$_i]}" = "--kb" ] && [ $((_i+1)) -lt ${#_add_args[@]} ]; then
                   _v="${_add_args[$((_i+1))]}"
@@ -105,14 +124,15 @@ case "$cmd" in
                 fi
               done
               PY add_codebase.py "${_add_args[@]}" ;;
-  ask)        PY query.py "${@:2}" ;;
+  ask)        _strip_kb "${@:2}"; PY query.py "${_out[@]}" ;;
   compile)    PY compile.py "${@:2}" ;;
   verify)     PY verify.py "${@:2}" ;;
   backfill)   PY ingest_all_context.py "${@:2}" ;;
   docs)       PY ingest_doc.py "${@:2}" && PY compile.py ;;
   recheck)    PY recheck.py "${@:2}" ;;
   remove)     # Same `--kb <name>` resolution as add.
-              _rm_args=("${@:2}")
+              _strip_kb "${@:2}"
+              _rm_args=("${_out[@]}")
               for ((_i = 0; _i < ${#_rm_args[@]}; _i++)); do
                 if [ "${_rm_args[$_i]}" = "--kb" ] && [ $((_i+1)) -lt ${#_rm_args[@]} ]; then
                   _v="${_rm_args[$((_i+1))]}"
