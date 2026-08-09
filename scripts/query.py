@@ -246,6 +246,13 @@ async def run_query(prompt: str, file_back: bool) -> tuple[str, float]:
     cli = system_cli_path()
     if cli:
         opts["cli_path"] = cli
+    # Pin the query model (capture-config `query_model`) — mirrors compile_model:
+    # without a pin the SDK inherits the interactive CLI's default model, billing
+    # every ask at whatever tier the user last chose interactively.
+    from capture_config import get_limits
+    query_model = str(get_limits().get("query_model", "")).strip()
+    if query_model and query_model != "inherit":
+        opts["model"] = query_model
 
     answer = ""
     cost = 0.0

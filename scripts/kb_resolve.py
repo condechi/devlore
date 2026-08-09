@@ -18,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-KB_DIRS_REGISTRY = Path.home() / ".claude" / "kb-dirs"
+from utils import kb_dirs_registry  # noqa: E402 — ~/.devlore/kb-dirs (migrates legacy)
 VIA_SYMLINK_ENV = "DEVLORE_VIA_PATH_SYMLINK"
 
 # A worktree target belongs to the project it is a worktree of.
@@ -31,10 +31,11 @@ except ImportError:  # standalone copy without hooks/ — degrade to identity
 
 
 def registered_kbs(self_kb: Path) -> list[Path]:
-    """KB roots from ~/.claude/kb-dirs that still look like KBs, plus self."""
+    """KB roots from the registry (~/.devlore/kb-dirs) that still look like
+    KBs, plus self."""
     kbs: list[Path] = []
     try:
-        lines = KB_DIRS_REGISTRY.read_text(encoding="utf-8").splitlines()
+        lines = kb_dirs_registry().read_text(encoding="utf-8").splitlines()
     except OSError:
         lines = []
     for line in lines:

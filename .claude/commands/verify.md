@@ -27,7 +27,8 @@ Do this:
 3. The script prints a **HAND-OFF PROMPT** for the flagged set — the residue the machine
    can't resolve without the in-flight, uncommitted truth this session holds. If anything is
    flagged, work that prompt: for each item verify the code-level claim against the **current
-   working tree** (Grep/Read across `crm/` and `metadata/`), then correct the article (state
+   working tree** (Grep/Read across the KB's linked code roots — the symlinked repos listed
+   in `scripts/code-roots`), then correct the article (state
    only the new truth, per the supersession rules) or confirm it. COMPILE-FABRICATED tokens
    are the highest-priority — a symbol absent from both code and the source daily is a likely
    hallucination.

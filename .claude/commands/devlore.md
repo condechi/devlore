@@ -15,7 +15,8 @@ conversations (PR D). Run
 `uv run --directory __DEVLORE_HOME__ python __DEVLORE_HOME__/scripts/ingest_all_context.py`
 passing through any extra flags. It is DRY-RUN by default — show the user the plan +
 cost estimate it prints and STOP for their explicit confirmation; only re-run with
-`--yes` after they approve the spend (it is compile-dominated, ~$6/conversation-part).
+`--yes` after they approve the spend (compile-dominated; roughly $2–5 per
+conversation-part on the default Sonnet-pinned compile).
 Per-conversation failures are auto-quarantined to `quarantine/<sid>.md` — report any.
 Then skip the steps below.
 

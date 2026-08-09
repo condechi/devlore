@@ -48,6 +48,10 @@ compile_chunk_chars = 40000
 # follow the CLI default again.
 compile_model = sonnet
 
+# query_model: the model `devlore ask` runs on — same rationale and the same
+# "inherit" escape hatch as compile_model.
+query_model = sonnet
+
 # compile_part_timeout: seconds before a hung compile part is abandoned (so one
 # stuck API/CLI call can't block the whole compile forever). The part is marked
 # failed and the daily is retried on the next compile. Keep this generous: the

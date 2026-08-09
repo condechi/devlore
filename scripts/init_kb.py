@@ -18,7 +18,7 @@ What it does, in order:
   5. skeleton knowledge/{concepts,connections,qa,mocs}/ + daily/ + generated
      empty index.md + log.md header
   6. `uv sync` the venv; git init + initial commit (local-only strategy)
-  7. append the KB to ~/.claude/kb-dirs (shared Claude status-line dispatcher)
+  7. append the KB to ~/.devlore/kb-dirs (multi-KB registry: routing + status line)
   8. [--with-obsidian] copy .obsidian/plugins/devlore + app.json ignore filters
 
 After init: start Claude Code or Codex sessions in the codebase (capture is live),
@@ -288,11 +288,13 @@ def main() -> None:
         print(f"  {'✓' if r.returncode == 0 else '⚠'} uv sync "
               f"({'ok' if r.returncode == 0 else r.stderr.strip()[:120]})")
 
-    # 7. status-line registry
-    reg = Path.home() / ".claude" / "kb-dirs"
+    # 7. multi-KB registry (owning-KB routing + status-line dispatch)
+    from utils import kb_dirs_registry
+    reg = kb_dirs_registry()
     if not dry:
         existing = reg.read_text(encoding="utf-8") if reg.exists() else \
-            "# Knowledge-base roots for the shared status-line dispatcher\n"
+            "# devlore multi-KB registry: one KB root per line (add/remove routing,\n" \
+            "# status-line dispatch). Managed by devlore init; safe to hand-edit.\n"
         if str(kb) not in existing:
             reg.write_text(existing.rstrip("\n") + f"\n{kb}\n", encoding="utf-8")
     print(f"  ✓ registered in {reg}")

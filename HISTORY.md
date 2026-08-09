@@ -148,7 +148,13 @@ v0.9.22 swept up the last trace of the episode: the machinery's own SDK
 transcripts — which had grown to 96% of the founding KB's Claude project dir
 (1.5 GB of exhaust masquerading as user sessions) — are now deleted on each
 compile, identified by the sentinel prompts only devlore's own sessions begin
-with, with a 24-hour grace window for anything recent or in flight.
+with, with a 24-hour grace window for anything recent or in flight. v0.9.23
+extended the model pin to queries (`query_model`, Sonnet by default), moved the
+multi-KB registry from `~/.claude/kb-dirs` to the harness-agnostic
+`~/.devlore/kb-dirs` (auto-migrated on first touch — devlore captures Codex as
+well as Claude Code, and its own state belongs in its own home), and scrubbed
+the last founding-KB repo names out of the tier-3 verifier's prompt, which now
+derives its repo list from `scripts/code-roots` like everything else.
 
 ## The lineage, in one line
 

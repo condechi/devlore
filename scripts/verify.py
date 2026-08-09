@@ -301,6 +301,9 @@ DEFAULT_TIER3_MODEL = "claude-sonnet-4-6"
 
 
 def build_tier3_prompt(slug: str, tok: str, sentence: str, disposition: str) -> str:
+    # The repo set comes from scripts/code-roots (generic across KBs) — never
+    # hardcode repo names here; they differ per install.
+    roots = ", ".join(f"`{name}/`" for name in code_repos()) or "the linked code roots"
     return f"""You are an adversarial code-grounding verifier. DEFAULT TO REFUTED.
 Your job is to try to DISPROVE that a cited code symbol exists in this repository.
 
@@ -311,8 +314,8 @@ it in the indexed source (disposition: {disposition}).
 Citing claim from the article:
 > {sentence}
 
-Search the code yourself with Grep/Glob/Read across the `crm/` and `metadata/` repos
-(they are symlinks under the project root) AND any `.sh`/`.mjs`/spec-`.md` files. Try
+Search the code yourself with Grep/Glob/Read across {roots}
+(symlinks under the project root) AND any `.sh`/`.mjs`/spec-`.md` files. Try
 genuinely to find it — exact, then case/underscore variants, then as a substring of a
 longer dotted path. Then decide:
 

@@ -30,6 +30,9 @@ DEFAULTS = {
                                    #   default model — historically Opus/Fable, at
                                    #   several dollars per daily. "inherit" (or an
                                    #   empty value) restores that behavior.
+    "query_model": "sonnet",       # model `devlore ask` runs on — same rationale
+                                   #   and same "inherit" escape hatch as
+                                   #   compile_model.
 }
 
 

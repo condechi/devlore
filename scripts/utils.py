@@ -68,6 +68,30 @@ def git_exclude(repo: Path, name: str, *, add: bool) -> bool:
     return True
 
 
+# ── Multi-KB registry (~/.devlore/kb-dirs) ────────────────────────────
+
+# The registry of installed KB roots is HARNESS-AGNOSTIC state (add/remove
+# owning-KB routing, status-line dispatch), so it lives in devlore's own
+# ~/.devlore home. It began life in ~/.claude/kb-dirs — wrong home once devlore
+# captures more than Claude Code — and is migrated from there on first touch.
+KB_DIRS_FILE = Path.home() / ".devlore" / "kb-dirs"
+LEGACY_KB_DIRS_FILE = Path.home() / ".claude" / "kb-dirs"
+
+
+def kb_dirs_registry() -> Path:
+    """Path of the multi-KB registry, MOVING the legacy ~/.claude/kb-dirs file
+    to ~/.devlore/kb-dirs the first time any devlore code touches it. Falls back
+    to the legacy path only if the move itself fails (e.g. permissions), so
+    readers and writers always agree on a single live file."""
+    if not KB_DIRS_FILE.exists() and LEGACY_KB_DIRS_FILE.exists():
+        try:
+            KB_DIRS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            LEGACY_KB_DIRS_FILE.replace(KB_DIRS_FILE)
+        except OSError:
+            return LEGACY_KB_DIRS_FILE
+    return KB_DIRS_FILE
+
+
 # ── State management ──────────────────────────────────────────────────
 
 def load_state() -> dict:
