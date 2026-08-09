@@ -9,9 +9,16 @@ and statusline.py so all four stay in sync from one file.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-CONFIG_FILE = Path(__file__).resolve().parent / "capture-config"
+# Resolve the capture-config path via the launcher-injected env var when
+# present (shared-lib mode), falling back to <kb>/scripts/capture-config for
+# direct invocation. Both modes point at the same file in the active KB.
+CONFIG_FILE = Path(
+    os.environ.get("DEVLORE_KB_ROOT")
+    or str(Path(__file__).resolve().parent.parent)
+) / "scripts" / "capture-config"
 
 DEFAULTS = {
     "max_turns": 120,          # fallback first-flush turn window; status-line window;

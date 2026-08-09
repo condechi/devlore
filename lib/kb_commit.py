@@ -13,11 +13,18 @@ Usage (manual):         uv run python scripts/kb_commit.py "message"
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+# Resolve ROOT_DIR via the launcher-injected env var when present (shared-lib
+# mode, served from ~/.devlore/lib/), falling back to <kb>/ for a stray direct
+# `python3 kb_commit.py` invocation.
+ROOT = Path(
+    os.environ.get("DEVLORE_KB_ROOT")
+    or str(Path(__file__).resolve().parent.parent)
+).resolve()
 
 
 def _git(*args: str) -> subprocess.CompletedProcess:

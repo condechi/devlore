@@ -14,10 +14,16 @@ Event shape: {"ts","source","kind","msg","level"}
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-ACTIVITY_FILE = Path(__file__).resolve().parent / "activity.jsonl"
+# Resolve via the launcher-injected env var when present (shared-lib mode),
+# falling back to <kb>/scripts/activity.jsonl for direct invocation.
+ACTIVITY_FILE = Path(
+    os.environ.get("DEVLORE_KB_ROOT")
+    or str(Path(__file__).resolve().parent.parent)
+) / "scripts" / "activity.jsonl"
 _MAX_BYTES = 512 * 1024  # keep the tail when it grows past this
 
 
