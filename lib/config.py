@@ -1,11 +1,23 @@
 """Path constants and configuration for the personal knowledge base."""
 
+import os
 import shutil
 from pathlib import Path
 from datetime import datetime, timezone
 
 # ── Paths ──────────────────────────────────────────────────────────────
-ROOT_DIR = Path(__file__).resolve().parent.parent
+# Two modes:
+#   - Shared (running from ~/.devlore/lib/): honor the launcher-injected
+#     DEVLORE_KB_ROOT so a single config.py can serve ANY active KB. This is
+#     how every KB-local script picks up the right KB's state.json +
+#     capture-roots + code-roots on every invocation.
+#   - Fallback (KB-local copy or running a script directly from <kb>/scripts/):
+#     derive ROOT_DIR from __file__ so a stray `python3 scripts/compile.py`
+#     still finds the KB it lives in.
+ROOT_DIR = Path(
+    os.environ.get("DEVLORE_KB_ROOT")
+    or str(Path(__file__).resolve().parent.parent)
+).resolve()
 DAILY_DIR = ROOT_DIR / "daily"
 KNOWLEDGE_DIR = ROOT_DIR / "knowledge"
 CONCEPTS_DIR = KNOWLEDGE_DIR / "concepts"
