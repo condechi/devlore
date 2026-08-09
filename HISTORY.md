@@ -167,6 +167,40 @@ launcher transparently. `--kb <name>` is now a peer of the existing `--kb
 <path>`. A first-detection prompt offers to register any KB the user is
 standing in; declines are remembered so the launcher never nags.
 
+### 7. Global launcher + shared machinery
+
+Through v0.9.24 every KB on a user's machine carried its own identical copy of
+all 40+ Python scripts, five hooks, `pyproject.toml`, `uv.lock`, and a full
+`.venv/`. The PATH entrypoint `~/.local/bin/devlore` was a symlink into one of
+the KBs — fine until that KB had a corrupted install or until you tried to
+update machinery across four KBs at once. v0.9.25 splits the codebase by
+responsibility. The **shared machinery** — `config.py`, `utils.py`, `kb_resolve.py`,
+`kb_registry.py`, `capture_config.py`, `transcripts.py`, `activity.py`,
+`kb_commit.py`, `staleness.py`, `stamp_baseline.py` — ships once into
+`~/.devlore/lib/` and is shared by every KB. The **global launcher** lives at
+`~/.devlore/bin/devlore` and is what `~/.local/bin/devlore` symlinks to; it
+routes commands to the right KB via the same cwd-decoupling + named-registry
+foundation that v0.9.24 added. KB-local scripts (`compile.py`, `query.py`,
+`flush.py`, `verify.py`, `recheck.py`, the `*.sh` wrappers, the Obsidian plugin,
+and the per-KB `devlore` launcher copy for backward compatibility) stay in
+`<kb>/scripts/` because they own per-KB state (`state.json`, `capture-roots`,
+`code-roots`, `capture-config`, runtime markers, logs). Hooks stay per-KB at
+`<kb>/hooks/` so the absolute paths in every captured project's
+`.claude/settings.local.json` and `.codex/hooks.json` don't need re-wiring.
+`config.py` resolves the active KB from the launcher-injected `DEVLORE_KB_ROOT`
+env var (falling back to `__file__`-relative when called directly) so a single
+shared module serves every KB at call time. `init_kb.py` ships the per-KB
+`pyproject.toml` as a stub (no deps; they live in `~/.devlore/lib/pyproject.toml`)
+and `update_kb.py --to-new-layout` migrates any v0.9.24 KB in place: removes the
+ten shared files from `<kb>/scripts/`, installs the shared lib, backs up the old
+`pyproject.toml` to `pyproject.toml.v0924.bak`, and repoints `~/.local/bin/devlore`
+to the global launcher. Slash commands (`/devlore`, `/ask`, `/compile`, `/verify`)
+now invoke the per-KB launcher (`__DEVLORE_HOME__/scripts/devlore <sub> $ARGS`)
+instead of `uv run` directly; the launcher injects `DEVLORE_KB_ROOT` and
+`PYTHONPATH=~/.devlore/lib`. The result: a `devlore update` re-materializes only
+KB-local files (was ~53, now ~30), and a fix to `kb_registry.py` lands once
+instead of N times.
+
 ## The lineage, in one line
 
 coleam00's claude-memory-compiler (installed May 22, 2026) → heavily adapted

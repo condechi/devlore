@@ -42,7 +42,22 @@ while [ -h "$src" ]; do
   case "$src" in /*) ;; *) src="$dir/$src" ;; esac
 done
 KB="$(cd -P "$(dirname "$src")/.." >/dev/null 2>&1 && pwd)"
-PY() { uv run --directory "$KB" python "$KB/scripts/$1" "${@:2}"; }
+# PY runs a KB-local script with DEVLORE_KB_ROOT pointing at this KB (so the
+# shared machinery in ~/.devlore/lib resolves paths to the right KB) and
+# PYTHONPATH including ~/.devlore/lib (so `from config import …` finds the
+# shared module). uv forwards PYTHONPATH into the spawned Python; DEVLORE_HOME
+# is set to the first directory in PYTHONPATH that contains /lib/, which the
+# lib's modules trust as the canonical install location. A bare `devlore` PATH
+# invocation goes through the global launcher; this PY is the per-KB fallback
+# (and what update_kb.py / init_kb.py invoke when they need to run scripts).
+PY() {
+  local _script="$1"; shift
+  local _devlore_lib="$HOME/.devlore/lib"
+  DEVLORE_KB_ROOT="$KB" \
+  PYTHONPATH="$_devlore_lib:${PYTHONPATH:-}" \
+  DEVLORE_HOME="$HOME/.devlore" \
+    uv run --directory "$KB" python "$KB/scripts/$_script" "$@"
+}
 
 # Installed KBs and the dist carry a VERSION file; a source checkout falls back
 # to the constant in build_dist.py.

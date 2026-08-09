@@ -8,13 +8,18 @@ touching what makes the KB *yours*:
   preserved: knowledge/, daily/, quarantine/, scripts/state.json,
              scripts/capture-roots, scripts/code-roots, flush markers, logs,
              your git history
-  updated:   every machinery file present in the dist — scripts, hooks,
-             AGENTS.md, .claude/commands + settings.json, pyproject/uv.lock,
-             .gitignore, and (only if this KB has an .obsidian/) the plugin
+  updated:   every machinery file present in the dist — KB-local scripts,
+             hooks, AGENTS.md, .claude/commands + settings.json, uv.lock,
+             .gitignore, and (only if this KB has an .obsidian/) the plugin.
+             The shared machinery (config, utils, kb_*, capture_config,
+             transcripts, activity, kb_commit, staleness, stamp_baseline)
+             lives at ~/.devlore/lib/ and is installed once for all KBs
+             (see --to-new-layout for the v0.9.24→v0.9.25 migration).
 
 Usage:
     devlore update                       # pull latest dist, update this KB
     devlore update --from <dist-path>    # update from a local dist/clone
+    devlore update --to-new-layout       # one-shot v0.9.24→v0.9.25 migration
     python3 update_kb.py --kb <kb-path>  # update ANOTHER KB (bootstrap case:
                                          #   the target predates this command)
 """
@@ -40,8 +45,11 @@ PLACEHOLDER = "__DEVLORE" + "_HOME__"
 # runtime files (state.json, markers, capture-roots, code-roots, logs) are
 # never listed in the dist and therefore never touched.
 SURFACES = ["scripts", "hooks", ".claude/commands"]
-ROOT_FILES = ["AGENTS.md", "pyproject.toml", "uv.lock", ".gitignore",
+ROOT_FILES = ["AGENTS.md", "uv.lock", ".gitignore",
               ".claude/settings.json", "VERSION"]
+# pyproject.toml ships as a stub (per-KB; deps live in ~/.devlore/lib/) — see
+# _migrate_to_shared_layout. Not in ROOT_FILES so it doesn't get overwritten
+# from the dist (the dist's pyproject.toml IS the stub — see build_dist.py).
 
 
 def _rewrite(text: str, src: Path, kb: Path) -> str:
@@ -98,11 +106,120 @@ def _copy(src_file: Path, dst_file: Path, src: Path, kb: Path) -> None:
         shutil.copy2(src_file, dst_file)
 
 
+# v0.9.25 migration: shared modules move from <kb>/scripts/ to ~/.devlore/lib/.
+# Idempotent: running on an already-migrated KB is a no-op.
+SHARED_FILES = (
+    "config.py", "utils.py", "kb_resolve.py", "kb_registry.py",
+    "capture_config.py", "transcripts.py", "activity.py",
+    "kb_commit.py", "staleness.py", "stamp_baseline.py",
+)
+
+
+def _shared_lib_installed(version: str) -> bool:
+    """True iff ~/.devlore/lib/VERSION is at or beyond `version`."""
+    p = Path.home() / ".devlore" / "lib" / "VERSION"
+    if not p.exists():
+        return False
+    try:
+        installed = p.read_text(encoding="utf-8").strip()
+        pa = tuple(int(x) for x in installed.split(".") if x.isdigit())
+        pb = tuple(int(x) for x in version.split(".") if x.isdigit())
+        return pa >= pb
+    except (OSError, ValueError):
+        return False
+
+
+def _install_shared_lib(src: Path, version: str) -> bool:
+    """Copy dist/lib/ → ~/.devlore/lib/. Idempotent via _shared_lib_installed.
+    Returns True when files were written."""
+    if _shared_lib_installed(version):
+        return False
+    lib_src = src / "lib"
+    if not lib_src.is_dir():
+        print(f"  ⚠ {src} has no lib/ directory — is it a v0.9.25+ dist? skipping.")
+        return False
+    lib_dst = Path.home() / ".devlore" / "lib"
+    lib_dst.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for f in lib_src.rglob("*"):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(lib_src)
+        dst = lib_dst / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            text = f.read_text(encoding="utf-8")
+            text = text.replace(str(src), str(lib_dst))
+            dst.write_text(text, encoding="utf-8")
+            dst.chmod(f.stat().st_mode)
+            n += 1
+        except UnicodeDecodeError:
+            shutil.copy2(f, dst)
+            n += 1
+    (lib_dst / "VERSION").write_text(version + "\n", encoding="utf-8")
+    print(f"  ✓ installed shared lib at ~/.devlore/lib (v{version}, {n} files)")
+    return True
+
+
+def _repoint_devlore_symlink() -> None:
+    """Move ~/.local/bin/devlore from the per-KB launcher to the global one."""
+    global_launcher = Path.home() / ".devlore" / "bin" / "devlore"
+    if not global_launcher.exists():
+        return
+    link = Path.home() / ".local" / "bin" / "devlore"
+    try:
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        link.symlink_to(global_launcher)
+        print(f"  ✓ ~/.local/bin/devlore → {global_launcher}")
+    except OSError as e:
+        print(f"  ⚠ could not repoint ~/.local/bin/devlore: {e}")
+
+
+def _migrate_to_shared_layout(kb: Path, src: Path, version: str) -> bool:
+    """v0.9.24 → v0.9.25 one-shot. Removes SHARED_FILES from <kb>/scripts/,
+    installs the shared lib, repoints the PATH symlink, and replaces the KB's
+    pyproject.toml with the stub. Idempotent: returns False when already done."""
+    # Detect migration status: are any of the SHARED files still in <kb>/scripts/?
+    needs_migration = any((kb / "scripts" / f).exists() for f in SHARED_FILES)
+    if not needs_migration:
+        return False
+    removed = []
+    for f in SHARED_FILES:
+        p = kb / "scripts" / f
+        if p.exists():
+            p.unlink()
+            removed.append(f)
+    print(f"  ✓ migrated: removed {len(removed)} shared files from <kb>/scripts/")
+    for r in removed:
+        print(f"      - {r}")
+    # Replace pyproject.toml with the stub from the dist.
+    stub_src = src / "pyproject.toml"
+    if stub_src.exists():
+        current = kb / "pyproject.toml"
+        if current.exists():
+            backup = kb / "pyproject.toml.v0924.bak"
+            if not backup.exists():
+                shutil.copy2(current, backup)
+                print(f"  · backed up previous pyproject.toml → pyproject.toml.v0924.bak")
+        (kb / "pyproject.toml").write_text(
+            stub_src.read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"  ✓ pyproject.toml replaced with per-KB stub (deps live in ~/.devlore/lib/)")
+    # Install shared lib + repoint symlink.
+    _install_shared_lib(src, version)
+    _repoint_devlore_symlink()
+    return True
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Update this KB's machinery from the devlore dist.")
     ap.add_argument("--from", dest="src", help="Local dist/clone to update from "
                     "(default: ~/.devlore/dist, git-pulled).")
     ap.add_argument("--kb", help="KB to update (default: the KB this script lives in).")
+    ap.add_argument("--to-new-layout", action="store_true",
+                    help="One-shot migration from v0.9.24 (remove now-shared files "
+                         "from <kb>/scripts/, install shared lib, repoint PATH symlink).")
     args = ap.parse_args()
 
     kb = Path(args.kb).expanduser().resolve() if args.kb \
@@ -141,6 +258,19 @@ def main() -> None:
 
     print(f"Updating machinery of {kb}")
     print(f"  from {src} (v{version})")
+
+    # v0.9.25 migration step: if --to-new-layout was passed (or the KB still
+    # has shared files in <kb>/scripts/ from v0.9.24), strip them, install the
+    # shared lib at ~/.devlore/lib/, repoint ~/.local/bin/devlore to the
+    # global launcher, and replace the per-KB pyproject.toml with a stub.
+    # Idempotent — already-migrated KBs are a no-op.
+    if args.to_new_layout or any((kb / "scripts" / f).exists() for f in SHARED_FILES):
+        migrated = _migrate_to_shared_layout(kb, src, version)
+        if not migrated:
+            print(f"  · already on the v0.9.25+ layout (no shared files in <kb>/scripts/)")
+        # Ensure the shared lib is at the dist's version even if migration was a no-op.
+        _install_shared_lib(src, version)
+        _repoint_devlore_symlink()
 
     n = 0
     for surface in SURFACES:

@@ -1,7 +1,7 @@
 ---
 description: Ingest hand-written doc file(s) or a directory into the knowledge base (daily log -> wiki)
 argument-hint: "@file.md | <dir> [more ...] | --ingest-all-context [flags]"
-allowed-tools: Bash(uv run --directory __DEVLORE_HOME__ python:*), Read
+allowed-tools: Bash(__DEVLORE_HOME__/scripts/devlore:*), Read
 ---
 
 Add the user's documentation to the knowledge pipeline so it becomes wiki articles.
@@ -12,7 +12,7 @@ Paths to ingest (from the command arguments): **$ARGUMENTS**
 
 **Special mode — `--ingest-all-context`:** the GATED batch backfill of never-flushed
 conversations (PR D). Run
-`uv run --directory __DEVLORE_HOME__ python __DEVLORE_HOME__/scripts/ingest_all_context.py`
+`__DEVLORE_HOME__/scripts/devlore backfill`
 passing through any extra flags. It is DRY-RUN by default — show the user the plan +
 cost estimate it prints and STOP for their explicit confirmation; only re-run with
 `--yes` after they approve the spend (compile-dominated; roughly $2–5 per
@@ -29,11 +29,11 @@ Do this:
 
 2. Append the doc(s) to today's daily log (deterministic, no summarization):
 
-   `uv run --directory __DEVLORE_HOME__ python __DEVLORE_HOME__/scripts/ingest_doc.py <path1> <path2> ...`
+   `__DEVLORE_HOME__/scripts/devlore docs <path1> <path2> ...`
 
 3. Compile into the wiki:
 
-   `uv run --directory __DEVLORE_HOME__ python __DEVLORE_HOME__/scripts/compile.py`
+   `__DEVLORE_HOME__/scripts/devlore compile`
 
    (Note: compile takes a single global lock. If it prints "Another compile is
    already running", a background compile is active — wait a moment and re-run, or

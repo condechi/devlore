@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# devlore — global launcher (v0.9.25+).
+#
+# Lives at ~/.devlore/bin/devlore. Symlinked to ~/.local/bin/devlore so a bare
+# `devlore` works from any directory. All KBs share this single binary; routing
+# lives in kb_registry.py (also shared, at ~/.devlore/lib/).
+#
+# Cwd-decoupling (v0.9.24+): the launcher self-locates to its own home FIRST,
+# then asks `kb_registry.py resolve` whether a DIFFERENT KB is a better fit —
+# one the cwd is inside, or the default — and re-execs THAT KB's launcher. So
+# `devlore ask "..."` works from anywhere, not just from inside a KB.
+# `--kb <name>` is the explicit spelling; `--kb <path>` still works.
+main() {
+set -uo pipefail
+
+# The caller's shell directory, captured BEFORE PY() runs scripts via
+# `uv run --directory "$KB"` (which starts Python inside the KB). add/remove
+# resolve a relative path argument like `.` against this, so it means the
+# directory you ran devlore FROM — not the KB (utils.resolve_invocation_path).
+# kb_registry.py reads it for cwd-decoupled read commands.
+export DEVLORE_INVOCATION_CWD="$PWD"
+
+# Resolve symlinks so DEVLORE_HOME is the real devlore home even when devlore
+# is invoked through a symlink on PATH (install.sh links ~/.local/bin/devlore
+# → ~/.devlore/bin/devlore). The bare PATH symlink is the one AMBIGUOUS way
+# in: mark it so add/remove can route to the owning KB. A full-path launcher
+# means "this home", so the marker is explicitly cleared (it may linger in
+# the environment).
+src="${BASH_SOURCE[0]:-$0}"
+if [ -h "$src" ]; then
+  export DEVLORE_VIA_PATH_SYMLINK=1
+else
+  unset DEVLORE_VIA_PATH_SYMLINK
+fi
+while [ -h "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" >/dev/null 2>&1 && pwd)"
+  src="$(readlink "$src")"
+  case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+done
+DEVLORE_HOME="$(cd -P "$(dirname "$src")/.." >/dev/null 2>&1 && pwd)"
+DEVLORE_LIB="$DEVLORE_HOME/lib"
+
+# Registry calls (no KB needed): run with PYTHONPATH=~/.devlore/lib so the
+# shared kb_registry module is importable. Plain python3 — no venv, no deps.
+REG() { PYTHONPATH="$DEVLORE_LIB:${PYTHONPATH:-}" python3 "$DEVLORE_LIB/kb_registry.py" "$@"; }
+
+# `--kb <value>` lives inside the `add`/`remove` branches below (those are
+# the only subcommands that accept `--kb` — query/compile/etc. would reject
+# the rewrite with argparse errors).
+_strip_kb() {
+  _out=()
+  _sn=0
+  for _a in "$@"; do
+    if [ "$_sn" = "1" ]; then _sn=0; continue; fi
+    if [ "$_a" = "--kb" ]; then _sn=1; continue; fi
+    _out+=("$_a")
+  done
+}
+
+cmd="${1:-list}"
+
+# `list`, `use`, and the bare invocation have NO KB context — they're pure
+# registry operations. Handle them first, before any KB resolution, so a
+# fresh install can run `devlore` / `devlore use` from anywhere.
+case "$cmd" in
+  list|"")
+    REG list --human
+    exit 0
+    ;;
+  use)
+    name="${2:?usage: devlore use <name>}"
+    REG use "$name"
+    exit 0
+    ;;
+  version|--version|-V)
+    echo "devlore v$(cat "$DEVLORE_LIB/VERSION" 2>/dev/null || echo dev)  (home: $DEVLORE_HOME)"
+    exit 0
+    ;;
+esac
+
+# Active KB resolution: every other subcommand runs in some KB's context.
+# `which` and the cwd-decoupling pre-pass both use this resolution. The pre-pass
+# for read commands (ask|status|compile|…) re-execs the resolved KB's launcher
+# so the user-visible PATH entrypoint stays global.
+explicit=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--kb" ]; then explicit="$a"; break; fi
+  prev="$a"
+done
+
+# First-detection prompt (tty-gated; opt-out via ~/.devlore/state.json).
+REG maybe-prompt --cwd "$PWD" --self "$DEVLORE_HOME" >/dev/null 2>&1 || true
+
+KB="$(REG resolve --cwd "$PWD" --explicit "$explicit" 2>/dev/null | tail -n1)"
+if [ -z "$KB" ]; then
+  echo "no KB resolved (cwd=$PWD). Run \`devlore\` to see registered KBs or " \
+       "\`devlore init <dir>\` to create one." >&2
+  exit 1
+fi
+# Verify the KB still has its launcher (a broken update is loud instead of silent).
+if [ ! -x "$KB/scripts/devlore" ]; then
+  echo "KB at $KB has no scripts/devlore — re-run \`devlore update\`." >&2
+  exit 1
+fi
+
+# Cwd-decoupling pre-pass for read commands. Each read cmd's logic still
+# lives in the per-KB launcher copy (the file with `cat <<EOF` for help, the
+# status walker, etc.) — the global launcher just routes to it.
+case "$cmd" in
+  ask|status|compile|verify|recheck|docs|backfill|obsidian)
+    if [ "$cmd" != "status" ] && [ "$cmd" != "help" ] && [ "$cmd" != "--help" ] && [ "$cmd" != "-h" ]; then
+      # Verify-style read commands are pure-Python; route to the per-KB
+      # launcher which injects DEVLORE_KB_ROOT + PYTHONPATH=~/.devlore/lib.
+      _strip_kb "$@"
+      exec "$KB/scripts/devlore" "${_out[@]}"
+    fi
+    ;;
+esac
+
+# Commands that always run in the active KB's context:
+case "$cmd" in
+  which)     echo "$KB" ;;
+  add)
+    _strip_kb "${@:2}"
+    _add_args=("${_out[@]}")
+    for ((_i = 0; _i < ${#_add_args[@]}; _i++)); do
+      if [ "${_add_args[$_i]}" = "--kb" ] && [ $((_i+1)) -lt ${#_add_args[@]} ]; then
+        _v="${_add_args[$((_i+1))]}"
+        case "$_v" in
+          /*|~*) ;;  # absolute path — pass through
+          *)
+            _r="$(REG resolve --cwd "$PWD" --explicit "$_v" 2>/dev/null | tail -n1)"
+            [ -n "$_r" ] && _add_args[$((_i+1))]="$_r"
+            ;;
+        esac
+        break
+      fi
+    done
+    exec "$KB/scripts/devlore" add "${_add_args[@]}"
+    ;;
+  remove)
+    _strip_kb "${@:2}"
+    _rm_args=("${_out[@]}")
+    for ((_i = 0; _i < ${#_rm_args[@]}; _i++)); do
+      if [ "${_rm_args[$_i]}" = "--kb" ] && [ $((_i+1)) -lt ${#_rm_args[@]} ]; then
+        _v="${_rm_args[$((_i+1))]}"
+        case "$_v" in
+          /*|~*) ;;
+          *)
+            _r="$(REG resolve --cwd "$PWD" --explicit "$_v" 2>/dev/null | tail -n1)"
+            [ -n "$_r" ] && _rm_args[$((_i+1))]="$_r"
+            ;;
+        esac
+        break
+      fi
+    done
+    exec "$KB/scripts/devlore" remove "${_rm_args[@]}"
+    ;;
+  update)    exec "$KB/scripts/devlore" update "${@:2}" ;;
+  obsidian)  exec "$KB/scripts/devlore" obsidian "${@:2}" ;;
+  init)      exec "$KB/scripts/devlore" init "${@:2}" ;;
+  status)    exec "$KB/scripts/devlore" status ;;
+  help|--help|-h)
+    exec "$KB/scripts/devlore" help
+    ;;
+  *)
+    exec "$KB/scripts/devlore" "$@"
+    ;;
+esac
+}
+main "$@"; exit $?

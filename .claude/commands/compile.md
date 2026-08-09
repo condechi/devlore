@@ -1,7 +1,7 @@
 ---
 description: Manually compile pending daily logs into the knowledge wiki
 argument-hint: "[--all]"
-allowed-tools: Bash(uv run --directory __DEVLORE_HOME__ python:*), Read
+allowed-tools: Bash(__DEVLORE_HOME__/scripts/devlore:*), Read
 ---
 
 Run a manual compile of the knowledge base. Daily logs accumulate from conversation
@@ -12,9 +12,9 @@ Optional arguments: $ARGUMENTS
 
 Do this:
 
-1. Run:
+1. Run (the per-KB launcher routes to the right KB and injects `DEVLORE_KB_ROOT`):
 
-   `uv run --directory __DEVLORE_HOME__ python __DEVLORE_HOME__/scripts/compile.py $ARGUMENTS`
+   `__DEVLORE_HOME__/scripts/devlore compile $ARGUMENTS`
 
    - If it prints **"Another compile is already running"**, a background compile is
      active — tell the user and stop (it will finish on its own).

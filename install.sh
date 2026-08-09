@@ -75,16 +75,43 @@ if ask "Add the optional Obsidian layer (vault config + side-panel plugin)?" 1; 
 fi
 
 say "→ creating your knowledge base at $TARGET"
-python3 "$DIST/scripts/init_kb.py" "$TARGET" $OBSIDIAN_FLAG
+
+# ── install the GLOBAL launcher + shared lib (v0.9.25+) ──────────────────────
+# The shared machinery (config, utils, kb_*, capture_config, transcripts,
+# activity, kb_commit, staleness, stamp_baseline) lives once at
+# ~/.devlore/lib/ and is shared by every KB. The global launcher at
+# ~/.devlore/bin/devlore routes commands to the right KB via cwd-decoupling.
+DEVLORE_HOME="$HOME/.devlore"
+mkdir -p "$DEVLORE_HOME/bin" "$DEVLORE_HOME/lib"
+if [ -d "$DIST/lib" ]; then
+  # Copy every file under dist/lib/ into ~/.devlore/lib/, stamping VERSION.
+  # `cp -R` preserves directory structure. The dist's lib/ is the
+  # source-of-truth (refreshed by `devlore update`); always overwrite so a
+  # re-run of install.sh stays current.
+  cp -R "$DIST/lib/." "$DEVLORE_HOME/lib/"
+  cp "$DIST/VERSION" "$DEVLORE_HOME/lib/VERSION" 2>/dev/null || true
+  # The global launcher must stay executable regardless of git's stored mode.
+  if [ -x "$DEVLORE_HOME/bin/devlore" ]; then
+    chmod +x "$DEVLORE_HOME/bin/devlore"
+  fi
+  echo "✓ installed: $DEVLORE_HOME/bin/devlore + $DEVLORE_HOME/lib/ (v$(cat "$DEVLORE_HOME/lib/VERSION" 2>/dev/null || echo dev))"
+else
+  echo "⚠ dist has no lib/ directory — running pre-v0.9.25 fallback (KB-local copies)"
+fi
 
 # ── CLI on PATH ───────────────────────────────────────────────────────────────
 mkdir -p "$HOME/.local/bin"
-ln -sf "$TARGET/scripts/devlore" "$HOME/.local/bin/devlore"
-chmod +x "$TARGET/scripts/devlore" 2>/dev/null || true
+ln -sf "$DEVLORE_HOME/bin/devlore" "$HOME/.local/bin/devlore"
 case ":$PATH:" in
   *":$HOME/.local/bin:"*) echo "✓ devlore on PATH (~/.local/bin)";;
   *) echo "⚠ add ~/.local/bin to your PATH to use \`devlore\` directly";;
 esac
+
+# ── materialize YOUR knowledge base ──────────────────────────────────────────
+# init_kb.py no longer copies shared modules — it (a) ensures the shared lib
+# is at the dist version (no-op if already there) and (b) copies only the
+# KB-local bits.
+python3 "$DIST/scripts/init_kb.py" "$TARGET" $OBSIDIAN_FLAG
 
 # ── optional niceties (both prompted, both reversible) ───────────────────────
 SETTINGS="$HOME/.claude/settings.json"

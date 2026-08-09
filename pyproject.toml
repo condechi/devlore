@@ -1,13 +1,17 @@
 [project]
-name = "devlore"
-version = "0.1.0"
-description = "Every codebase has lore. devlore compiles your AI conversations into a self-checking knowledge base."
+name = "devlore-kb"
+version = "0.9.25"
+description = "devlore knowledge base (per-KB stub — shared machinery lives at ~/.devlore/lib/)"
 requires-python = ">=3.12"
-dependencies = [
-    "claude-agent-sdk>=0.1.29",
-    "python-dotenv>=1.0.0",
-    "tzdata>=2024.1",
-]
+
+# No dependencies here. The shared devlore machinery (config, utils,
+# kb_resolve, kb_registry, capture_config, transcripts, activity, kb_commit,
+# staleness, stamp_baseline) lives at ~/.devlore/lib/. KB-local scripts in
+# this KB's scripts/ directory import the shared modules via PYTHONPATH
+# (injected by the launcher) and resolve KB-specific paths via DEVLORE_KB_ROOT.
+#
+# `uv run --directory <this-kb>` still works because uv only needs a project
+# marker ([project] + requires-python) to consider this directory a project.
 
 [tool.ruff]
 line-length = 100

@@ -42,23 +42,33 @@ from pathlib import Path
 
 SOURCE_ROOT = Path(__file__).resolve().parent.parent  # the template KB (this repo)
 
-# The machinery payload: everything a new KB needs, nothing specific to the template KB.
-# (enrich_frontmatter.py is excluded on purpose — its subsystem taxonomy is this
-# KB's backfill tool; new KBs start empty and the compiler fills `subsystem:`.)
-PAYLOAD_SCRIPTS = [
-    "activity.py", "add_codebase.py", "build_index.py", "capture-config",
-    "capture_config.py", "compile.py", "compile.sh", "config.py", "flush.py",
-    "ingest_all_context.py", "ingest_doc.py", "init_kb.py", "kb_commit.py",
-    "kb_registry.py", "kb_resolve.py", "lint.py", "obsidian_setup.py",
-    "optin.py", "query.py", "query.sh", "recheck.py", "recheck.sh",
-    "remove_codebase.py", "staleness.py", "stamp_baseline.py", "status.py",
-    "status.sh", "statusline-wrapper.sh", "statusline.py", "transcripts.py",
-    "update.sh", "update_kb.py", "utils.py", "verify.py", "verify.sh",
+# v0.9.25 split: SHARED modules ship once into ~/.devlore/lib/ (handled by
+# install.sh + init_kb.py's shared-lib installer) and get imported by every
+# KB via DEVLORE_KB_ROOT + PYTHONPATH=~/.devlore/lib. KB-LOCAL scripts stay
+# in <kb>/scripts/ because they own per-KB state (knowledge/, daily/, state.json,
+# capture-roots, code-roots, capture-config, flush markers, runtime logs).
+PAYLOAD_SHARED = [
+    "config.py", "utils.py", "kb_resolve.py", "kb_registry.py",
+    "capture_config.py", "transcripts.py", "activity.py",
+    "kb_commit.py", "staleness.py", "stamp_baseline.py",
+]
+PAYLOAD_LOCAL = [
+    "add_codebase.py", "build_index.py", "capture-config",
+    "compile.py", "compile.sh", "flush.py",
+    "ingest_all_context.py", "ingest_doc.py", "init_kb.py", "lint.py",
+    "obsidian_setup.py", "optin.py", "query.py", "query.sh",
+    "recheck.py", "recheck.sh", "remove_codebase.py", "status.py",
+    "status.sh", "statusline-wrapper.sh", "statusline.py",
+    "update.sh", "update_kb.py", "verify.py", "verify.sh",
     "devlore", "devlore.sh",
 ]
+# PAYLOAD_SCRIPTS kept as the union for back-compat with code that iterates it
+# (notably scripts/build_dist.py, scripts/update_kb.py). New code should prefer
+# PAYLOAD_SHARED + PAYLOAD_LOCAL.
+PAYLOAD_SCRIPTS = sorted(set(PAYLOAD_SHARED) | set(PAYLOAD_LOCAL))
 PAYLOAD_HOOKS = ["capture_gate.py", "pre-compact.py", "session-end.py",
                  "session-start.py", "stop.py"]
-PAYLOAD_ROOT = ["AGENTS.md", "pyproject.toml", "uv.lock", ".gitignore"]
+PAYLOAD_ROOT = ["AGENTS.md", "uv.lock", ".gitignore"]  # pyproject.toml ships as a stub below
 PAYLOAD_CLAUDE = ["settings.json"]  # + commands/ tree
 # Claude fires SessionEnd only at session end and PreCompact only on compaction,
 # so a long session captures nothing until one of those — Stop (every turn) runs
@@ -104,6 +114,83 @@ def _copy(src: Path, dst: Path, target: Path, dry: bool) -> None:
 
 def _slug(path: Path) -> str:
     return re.sub(r"[^a-z0-9-]+", "-", path.name.lower()).strip("-") or "code"
+
+
+# ── Shared lib installer (v0.9.25+) ────────────────────────────────────
+# The shared machinery lives at ~/.devlore/lib/. install.sh copies it on a
+# fresh install; init_kb.py / update_kb.py install it on every subsequent
+# KB init/update so a user can have a working `devlore` even if they never ran
+# install.sh (e.g. cloned the dist directly and ran init_kb.py by hand).
+
+def _shared_lib_root() -> Path:
+    return Path.home() / ".devlore" / "lib"
+
+
+def _shared_lib_installed(source_version: str) -> bool:
+    """True iff ~/.devlore/lib/VERSION is at or beyond `source_version`."""
+    p = _shared_lib_root() / "VERSION"
+    if not p.exists():
+        return False
+    try:
+        installed = p.read_text(encoding="utf-8").strip()
+        pa = tuple(int(x) for x in installed.split(".") if x.isdigit())
+        pb = tuple(int(x) for x in source_version.split(".") if x.isdigit())
+        return pa >= pb
+    except (OSError, ValueError):
+        return False
+
+
+def _install_shared_lib(source_root: Path, source_version: str, dry: bool = False) -> bool:
+    """Copy `source_root/dist-assets/lib/` into ~/.devlore/lib/. Stamps VERSION.
+    Idempotent: returns False when the installed version already meets source_version.
+    Returns True when files were written or overwritten."""
+    if _shared_lib_installed(source_version):
+        return False
+    if dry:
+        return True
+    lib_src = source_root / "dist-assets" / "lib"
+    if not lib_src.is_dir():
+        # Source-of-truth repo without dist-assets/lib/ (e.g. a checkout mid-refactor):
+        # silently skip — init_kb.py will fall back to copying per-KB.
+        return False
+    lib_dst = _shared_lib_root()
+    lib_dst.mkdir(parents=True, exist_ok=True)
+    for f in lib_src.rglob("*"):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(lib_src)
+        dst = lib_dst / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            text = f.read_text(encoding="utf-8")
+            # No KB-specific placeholder rewriting here: shared modules reference
+            # the KB via DEVLORE_KB_ROOT at call time, never baked paths.
+            dst.write_text(text, encoding="utf-8")
+            dst.chmod(f.stat().st_mode)
+        except UnicodeDecodeError:
+            shutil.copy2(f, dst)
+    # Stamp the version so future init/update runs know to skip.
+    (lib_dst / "VERSION").write_text(source_version + "\n", encoding="utf-8")
+    # Also write the launcher to ~/.devlore/bin/ so a `devlore` PATH symlink works.
+    launcher_src = lib_src / "bin" / "devlore"
+    if launcher_src.exists():
+        launcher_dst = Path.home() / ".devlore" / "bin" / "devlore"
+        launcher_dst.parent.mkdir(parents=True, exist_ok=True)
+        launcher_dst.write_text(
+            launcher_src.read_text(encoding="utf-8"), encoding="utf-8")
+        launcher_dst.chmod(0o755)
+        # Repoint ~/.local/bin/devlore → ~/.devlore/bin/devlore (best-effort;
+        # install.sh already does this for fresh installs, but a KB created via
+        # init alone still gets the global entrypoint).
+        link = Path.home() / ".local" / "bin" / "devlore"
+        if link.parent.exists() or link.parent.mkdir(parents=True, exist_ok=True) or True:
+            try:
+                if link.exists() or link.is_symlink():
+                    link.unlink()
+                link.symlink_to(launcher_dst)
+            except OSError:
+                pass  # ~/.local/bin may not exist or be writable — non-fatal.
+    return True
 
 
 # The KB's own structure — a codebase symlink must never shadow these.
@@ -233,18 +320,41 @@ def main() -> None:
     print(f"  template: {SOURCE_ROOT}")
 
     # 2. machinery payload (path-rewritten)
-    for name in PAYLOAD_SCRIPTS:
+    # v0.9.25: only KB-LOCAL scripts land in <kb>/scripts/. The shared
+    # machinery (config, utils, kb_*, capture_config, transcripts, activity,
+    # kb_commit, staleness, stamp_baseline) goes into ~/.devlore/lib/ instead,
+    # installed once and reused by every KB.
+    source_version = (SOURCE_ROOT / "VERSION").read_text(encoding="utf-8").strip() \
+        if (SOURCE_ROOT / "VERSION").exists() else "0.0.0"
+    shared_installed = _install_shared_lib(SOURCE_ROOT, source_version, dry)
+    if not dry and shared_installed:
+        print(f"  ✓ shared lib installed at ~/.devlore/lib (v{source_version})")
+    elif not dry and not shared_installed:
+        print(f"  · shared lib already at v{source_version} or newer (skipped)")
+    for name in PAYLOAD_LOCAL:
         _copy(SOURCE_ROOT / "scripts" / name, kb / "scripts" / name, kb, dry)
     for name in PAYLOAD_HOOKS:
         _copy(SOURCE_ROOT / "hooks" / name, kb / "hooks" / name, kb, dry)
     for name in PAYLOAD_ROOT:
         _copy(SOURCE_ROOT / name, kb / name, kb, dry)
+    # pyproject.toml is the per-KB STUB (no deps — shared lib carries them).
+    if not dry:
+        stub = SOURCE_ROOT / "dist-assets" / "kb-pyproject.toml"
+        if stub.exists():
+            (kb / "pyproject.toml").write_text(
+                stub.read_text(encoding="utf-8"), encoding="utf-8")
+    # .claude/settings.json lives at dist-assets/claude/settings.json in the
+    # source-of-truth repo (so the same file works for both source checkouts
+    # and built dists). The dist lays it out at dist/.claude/settings.json.
+    claude_src = SOURCE_ROOT / "dist-assets" / "claude"
+    if not claude_src.exists():
+        claude_src = SOURCE_ROOT / ".claude"
     for name in PAYLOAD_CLAUDE:
-        _copy(SOURCE_ROOT / ".claude" / name, kb / ".claude" / name, kb, dry)
-    for cmd in sorted((SOURCE_ROOT / ".claude" / "commands").glob("*.md")):
+        _copy(claude_src / name, kb / ".claude" / name, kb, dry)
+    for cmd in sorted(claude_src.glob("commands/*.md")):
         _copy(cmd, kb / ".claude" / "commands" / cmd.name, kb, dry)
-    print(f"  ✓ machinery copied ({len(PAYLOAD_SCRIPTS)} scripts, {len(PAYLOAD_HOOKS)} hooks, "
-          f"commands, AGENTS.md)")
+    print(f"  ✓ machinery copied ({len(PAYLOAD_LOCAL)} KB-local scripts, "
+          f"{len(PAYLOAD_HOOKS)} hooks, commands, AGENTS.md)")
 
     # 3. symlinks + capture-roots + code-roots + fresh runtime config
     links = []
@@ -297,6 +407,7 @@ def main() -> None:
     #                              list/use/which; cwd-decoupling uses the
     #                              `path` here to find the entry by cwd)
     from utils import kb_dirs_registry
+    from config import now_iso
     reg = kb_dirs_registry()
     if not dry:
         existing = reg.read_text(encoding="utf-8") if reg.exists() else \
