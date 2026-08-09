@@ -63,7 +63,6 @@ PY() {
   DEVLORE_HOME="$HOME/.devlore" \
     uv run --directory "$KB" python "$_kb_script" "$@"
 }
-}
 
 # Installed KBs and the dist carry a VERSION file; a source checkout falls back
 # to the constant in build_dist.py.
