@@ -48,7 +48,10 @@ if os.environ.get("CLAUDE_INVOKED_BY"):
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = ROOT / "scripts"
 STATE_DIR = SCRIPTS_DIR
+# v0.9.25+ — transcripts moved to ~/.devlore/lib/. Add both paths so this hook
+# works in pre-v0.9.25 (KB-local) and v0.9.25+ (shared lib) layouts.
 sys.path.insert(0, str(SCRIPTS_DIR))
+sys.path.insert(0, str(Path.home() / ".devlore" / "lib"))
 from transcripts import iter_transcript_turns, extract_delta, parse_iso  # noqa: E402
 
 logging.basicConfig(

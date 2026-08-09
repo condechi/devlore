@@ -20,8 +20,13 @@ ROOT = Path(__file__).resolve().parent.parent
 CAPTURE_ROOTS_FILE = ROOT / "scripts" / "capture-roots"
 
 # Re-export the shared capture-sizing loader so the hooks can import everything
-# capture-related from one place. capture_config.py lives in scripts/.
+# capture-related from one place. capture_config.py moved to ~/.devlore/lib/ in
+# v0.9.25 — the env-var override handles multi-KB paths, and `HOME` is the
+# canonical install location. We add both <kb>/scripts (for any KB-local utils)
+# and ~/.devlore/lib (for the shared modules) so this hook works in both
+# pre-v0.9.25 (KB-local) and v0.9.25+ (shared lib) layouts.
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(Path.home() / ".devlore" / "lib"))
 from capture_config import get_limits  # noqa: E402
 
 
