@@ -102,7 +102,16 @@ case "$cmd" in
     exit 0
     ;;
   which)
-    PY kb_registry.py resolve --cwd "$PWD" --explicit ""
+    # Resolve the active KB. Honors `--kb <name|path>` if present so
+    # `devlore which --kb <name>` shows the same path the cwd-decoupling
+    # pre-pass would route to. Without `--kb`, mirrors the pre-pass logic.
+    _explicit=""
+    _prev=""
+    for _a in "$@"; do
+      if [ "$_prev" = "--kb" ]; then _explicit="$_a"; break; fi
+      _prev="$_a"
+    done
+    PY kb_registry.py resolve --cwd "$PWD" --explicit "$_explicit"
     exit 0
     ;;
   add)        # `--kb <name>` resolution for add/remove only (the cwd-decoupling
