@@ -130,7 +130,8 @@ def _shared_lib_installed(version: str) -> bool:
 
 
 def _install_shared_lib(src: Path, version: str) -> bool:
-    """Copy dist/lib/ → ~/.devlore/lib/. Idempotent via _shared_lib_installed.
+    """Copy dist/lib/ → ~/.devlore/lib/ (and dist/lib/bin/* → ~/.devlore/bin/
+    for the global launcher). Idempotent via _shared_lib_installed.
     Returns True when files were written."""
     if _shared_lib_installed(version):
         return False
@@ -139,13 +140,20 @@ def _install_shared_lib(src: Path, version: str) -> bool:
         print(f"  ⚠ {src} has no lib/ directory — is it a v0.9.25+ dist? skipping.")
         return False
     lib_dst = Path.home() / ".devlore" / "lib"
+    bin_dst = Path.home() / ".devlore" / "bin"
     lib_dst.mkdir(parents=True, exist_ok=True)
+    bin_dst.mkdir(parents=True, exist_ok=True)
     n = 0
     for f in lib_src.rglob("*"):
         if not f.is_file():
             continue
         rel = f.relative_to(lib_src)
-        dst = lib_dst / rel
+        # The launcher lives under dist/lib/bin/ so a single `cp -R dist/lib/. ~/.devlore/lib/`
+        # brings it along — but the canonical home is ~/.devlore/bin/, sibling of lib/.
+        if rel.parts and rel.parts[0] == "bin":
+            dst = bin_dst / Path(*rel.parts[1:])
+        else:
+            dst = lib_dst / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         try:
             text = f.read_text(encoding="utf-8")
@@ -157,7 +165,7 @@ def _install_shared_lib(src: Path, version: str) -> bool:
             shutil.copy2(f, dst)
             n += 1
     (lib_dst / "VERSION").write_text(version + "\n", encoding="utf-8")
-    print(f"  ✓ installed shared lib at ~/.devlore/lib (v{version}, {n} files)")
+    print(f"  ✓ installed shared lib at ~/.devlore/lib + bin (v{version}, {n} files)")
     return True
 
 

@@ -84,14 +84,15 @@ say "→ creating your knowledge base at $TARGET"
 DEVLORE_HOME="$HOME/.devlore"
 mkdir -p "$DEVLORE_HOME/bin" "$DEVLORE_HOME/lib"
 if [ -d "$DIST/lib" ]; then
-  # Copy every file under dist/lib/ into ~/.devlore/lib/, stamping VERSION.
-  # `cp -R` preserves directory structure. The dist's lib/ is the
-  # source-of-truth (refreshed by `devlore update`); always overwrite so a
-  # re-run of install.sh stays current.
+  # The dist ships Python modules directly under lib/ and the global launcher
+  # under lib/bin/. Copy modules → lib/, launcher → bin/, stamp VERSION.
+  # The dist's lib/ is the source-of-truth (refreshed by `devlore update`);
+  # always overwrite so a re-run of install.sh stays current.
   cp -R "$DIST/lib/." "$DEVLORE_HOME/lib/"
   cp "$DIST/VERSION" "$DEVLORE_HOME/lib/VERSION" 2>/dev/null || true
-  # The global launcher must stay executable regardless of git's stored mode.
-  if [ -x "$DEVLORE_HOME/bin/devlore" ]; then
+  if [ -d "$DEVLORE_HOME/lib/bin" ]; then
+    cp -R "$DEVLORE_HOME/lib/bin/." "$DEVLORE_HOME/bin/"
+    rm -rf "$DEVLORE_HOME/lib/bin"
     chmod +x "$DEVLORE_HOME/bin/devlore"
   fi
   echo "✓ installed: $DEVLORE_HOME/bin/devlore + $DEVLORE_HOME/lib/ (v$(cat "$DEVLORE_HOME/lib/VERSION" 2>/dev/null || echo dev))"
