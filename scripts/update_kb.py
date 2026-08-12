@@ -106,6 +106,81 @@ def _copy(src_file: Path, dst_file: Path, src: Path, kb: Path) -> None:
         shutil.copy2(src_file, dst_file)
 
 
+# v0.9.26: capture-config is the one file under <kb>/scripts/ that the user
+# customizes (compile_model, query_model, bootstrap_turns, …). The dist ships
+# it on every update, but a plain overwrite would clobber the user's pins.
+# Special-case the copy: walk the dist's comments + ordering verbatim, but
+# preserve any user value that differs from the dist's default. KB-only keys
+# (typos, deprecated knobs the loader already ignores) are dropped with a log
+# line so the file doesn't silently grow on every dist upgrade.
+CAPTURE_CONFIG_NAME = "capture-config"
+_DIST_KNOWN_KEYS = {
+    "bootstrap_turns", "max_turns", "max_chars", "chunk_chars",
+    "compile_chunk_chars", "compile_model", "query_model",
+    "compile_part_timeout",
+}
+
+
+def _merge_capture_config(kb_file: Path, dist_file: Path) -> str | None:
+    """Merge dist's capture-config over the KB's, preserving user-customized values.
+
+    The dist wins on comments, ordering, and the `key = value` formatting for any
+    key the user didn't actually change. The user wins on the value for any key
+    whose value differs from the dist's. Whitespace is normalized for the
+    comparison (so `compile_model =  sonnet` doesn't trigger a false "preserved").
+
+    Returns a one-line summary "preserved N key(s) you customized: …" when
+    anything was preserved, or None. Falls back to a plain overwrite on
+    whole-file parse failure (logged with a warning).
+    """
+    def _parse_user(path: Path) -> dict[str, str]:
+        out: dict[str, str] = {}
+        if not path.exists():
+            return out
+        for i, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = raw.partition("=")
+            out[k.strip()] = v  # keep user's exact whitespace for re-emit
+        return out
+
+    try:
+        user = _parse_user(kb_file)
+        dist_text = dist_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"  ⚠ could not parse {kb_file} ({e}); overwriting with dist defaults")
+        kb_file.parent.mkdir(parents=True, exist_ok=True)
+        kb_file.write_text(dist_file.read_text(encoding="utf-8"), encoding="utf-8")
+        return None
+
+    preserved: list[str] = []
+    out_lines: list[str] = []
+    for line in dist_text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            out_lines.append(line)
+            continue
+        k, _, v = line.partition("=")
+        key = k.strip()
+        if key in user and user[key].strip() != v.strip():
+            out_lines.append(f"{k} = {user[key]}")
+            preserved.append(key)
+        else:
+            out_lines.append(line)
+
+    dropped = [k for k in user if k not in _DIST_KNOWN_KEYS]
+    if dropped:
+        print(f"  · dropped {len(dropped)} KB-only key(s) not in dist capture-config: "
+              f"{', '.join(sorted(dropped))}")
+
+    kb_file.write_text("\n".join(out_lines) + ("\n" if dist_text.endswith("\n") else ""),
+                       encoding="utf-8")
+    if preserved:
+        return f"preserved {len(preserved)} key(s) you customized: {', '.join(preserved)}"
+    return None
+
+
 # v0.9.25 migration: shared modules move from <kb>/scripts/ to ~/.devlore/lib/.
 # Idempotent: running on an already-migrated KB is a no-op.
 SHARED_FILES = (
@@ -281,13 +356,20 @@ def main() -> None:
         _repoint_devlore_symlink()
 
     n = 0
+    capture_note: str | None = None
     for surface in SURFACES:
         sdir = src / surface
         if not sdir.is_dir():
             continue
         for f in sorted(sdir.iterdir()):
             if f.is_file():
-                _copy(f, kb / surface / f.name, src, kb)
+                dst = kb / surface / f.name
+                if f.name == CAPTURE_CONFIG_NAME:
+                    capture_note = _merge_capture_config(dst, f)
+                    if capture_note:
+                        print(f"  ✓ capture-config: {capture_note}")
+                else:
+                    _copy(f, dst, src, kb)
                 n += 1
     for rel in ROOT_FILES:
         f = src / rel
@@ -307,7 +389,8 @@ def main() -> None:
     cli = kb / "scripts" / "devlore"
     if cli.exists():
         cli.chmod(cli.stat().st_mode | 0o111)
-    print(f"  ✓ {n} machinery file(s) refreshed (knowledge/daily/config untouched)")
+    extra = f" — capture-config: {capture_note}" if capture_note else ""
+    print(f"  ✓ {n} machinery file(s) refreshed (knowledge/daily/config untouched){extra}")
 
     # Re-wire capture hooks into external captured projects so new hook events
     # (e.g. the Stop bootstrap hook) reach existing installs, not just new opt-ins.

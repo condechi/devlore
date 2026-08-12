@@ -201,6 +201,23 @@ instead of `uv run` directly; the launcher injects `DEVLORE_KB_ROOT` and
 KB-local files (was ~53, now ~30), and a fix to `kb_registry.py` lands once
 instead of N times.
 
+### 8. Capture-config preservation (v0.9.26)
+
+The one file under `<kb>/scripts/` that the user customizes is
+`capture-config` — `compile_model`, `query_model`, `bootstrap_turns`, and the
+other capture-sizing knobs. Through v0.9.25 a `devlore update` would clobber
+the user's values back to the dist's defaults on every run, forcing the user
+to re-pin them by hand. v0.9.26 special-cases the copy: the dist's
+`capture-config` is walked line by line, comments and ordering are adopted
+verbatim, and any user value that differs from the dist's default is preserved.
+A new key added by the dist flows through; a key the user pinned to a
+non-default value survives; a key the user had but the dist no longer ships
+(a typo, a deprecated knob the loader already ignores) is dropped with a log
+line so the file doesn't silently grow. The merge is idempotent — re-running
+`devlore update` after the user has accepted the merge produces a byte-identical
+file, so the post-update auto-commit stays quiet for users who never
+customized anything.
+
 ## The lineage, in one line
 
 coleam00's claude-memory-compiler (installed May 22, 2026) → heavily adapted
