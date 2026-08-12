@@ -114,7 +114,11 @@ def _copy(src_file: Path, dst_file: Path, src: Path, kb: Path) -> None:
 # (typos, deprecated knobs the loader already ignores) are dropped with a log
 # line so the file doesn't silently grow on every dist upgrade.
 CAPTURE_CONFIG_NAME = "capture-config"
-_DIST_KNOWN_KEYS = {
+# _DIST_KNOWN_KEYS is the *core* set the loader knows about (mirrors
+# ~/.devlore/lib/capture_config.py:DEFAULTS). The merge actively walks the
+# current dist file to learn its full key set, so any new key the dist adds
+# is preserved on subsequent merges rather than being dropped as "KB-only".
+_CORE_DIST_KEYS = {
     "bootstrap_turns", "max_turns", "max_chars", "chunk_chars",
     "compile_chunk_chars", "compile_model", "query_model",
     "compile_part_timeout",
@@ -156,6 +160,7 @@ def _merge_capture_config(kb_file: Path, dist_file: Path) -> str | None:
 
     preserved: list[str] = []
     out_lines: list[str] = []
+    dist_keys: set[str] = set()
     for line in dist_text.splitlines():
         s = line.strip()
         if not s or s.startswith("#") or "=" not in s:
@@ -163,13 +168,18 @@ def _merge_capture_config(kb_file: Path, dist_file: Path) -> str | None:
             continue
         k, _, v = line.partition("=")
         key = k.strip()
+        dist_keys.add(key)
         if key in user and user[key].strip() != v.strip():
             out_lines.append(f"{k} = {user[key]}")
             preserved.append(key)
         else:
             out_lines.append(line)
 
-    dropped = [k for k in user if k not in _DIST_KNOWN_KEYS]
+    # Drop keys the user has but the dist doesn't recognize. Anything the
+    # dist declares (even a brand-new key added this release) is preserved —
+    # the KB-only check is against the actual current dist file, not a
+    # hard-coded list, so newly-shipped keys flow through cleanly.
+    dropped = [k for k in user if k not in dist_keys]
     if dropped:
         print(f"  · dropped {len(dropped)} KB-only key(s) not in dist capture-config: "
               f"{', '.join(sorted(dropped))}")
