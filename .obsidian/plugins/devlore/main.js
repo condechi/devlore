@@ -32,13 +32,17 @@ const fs = require('fs');
 const path = require('path');
 
 // The only commands this plugin can ever run (all hardcoded — not a general runner).
-const DEVLORE_SH = '__DEVLORE_HOME__/scripts/devlore.sh';
-const COMPILE_SH = '__DEVLORE_HOME__/scripts/compile.sh';
-const QUERY_SH = '__DEVLORE_HOME__/scripts/query.sh';
-const VERIFY_SH = '__DEVLORE_HOME__/scripts/verify.sh';
-const STATUS_SH = '__DEVLORE_HOME__/scripts/status.sh';
-const RECHECK_SH = '__DEVLORE_HOME__/scripts/recheck.sh';
-const UPDATE_SH = '__DEVLORE_HOME__/scripts/update.sh';
+// v0.9.27+: paths now point at `~/.devlore/bin/<name>.sh` shims (replacing the
+// per-KB `scripts/<name>.sh` siblings, removed in v0.9.27). Each shim is a
+// 3-line bash wrapper that `exec`s `devlore <sub> "$@"`, so the plugin's behavior
+// is preserved verbatim — same argv contract, same allowlist semantics.
+const DEVLORE_SH = '__DEVLORE_BIN_DIR__/devlore.sh';
+const COMPILE_SH = '__DEVLORE_BIN_DIR__/compile.sh';
+const QUERY_SH = '__DEVLORE_BIN_DIR__/query.sh';
+const VERIFY_SH = '__DEVLORE_BIN_DIR__/verify.sh';
+const STATUS_SH = '__DEVLORE_BIN_DIR__/status.sh';
+const RECHECK_SH = '__DEVLORE_BIN_DIR__/recheck.sh';
+const UPDATE_SH = '__DEVLORE_BIN_DIR__/update.sh';
 // Heartbeat written by scripts/compile.py while a compile is running.
 const COMPILE_STATUS = '__DEVLORE_HOME__/scripts/compile.status.json';
 // Unified background-activity stream (scripts/activity.py): flush/compile/ingest events.

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --directory __DEVLORE_HOME__ python hooks/session-start.py",
+            "command": "python3 __DEVLORE_HOME__/hooks/session-start.py",
             "timeout": 15
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --directory __DEVLORE_HOME__ python hooks/pre-compact.py",
+            "command": "python3 __DEVLORE_HOME__/hooks/pre-compact.py",
             "timeout": 10
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --directory __DEVLORE_HOME__ python hooks/session-end.py",
+            "command": "python3 __DEVLORE_HOME__/hooks/session-end.py",
             "timeout": 10
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --directory __DEVLORE_HOME__ python hooks/stop.py",
+            "command": "python3 __DEVLORE_HOME__/hooks/stop.py",
             "timeout": 10
           }
         ]

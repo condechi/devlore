@@ -54,13 +54,12 @@ PAYLOAD_SHARED = [
 ]
 PAYLOAD_LOCAL = [
     "add_codebase.py", "build_index.py", "capture-config",
-    "compile.py", "compile.sh", "flush.py",
+    "compile.py", "flush.py",
     "ingest_all_context.py", "ingest_doc.py", "init_kb.py", "lint.py",
-    "obsidian_setup.py", "optin.py", "query.py", "query.sh",
-    "recheck.py", "recheck.sh", "remove_codebase.py", "status.py",
-    "status.sh", "statusline-wrapper.sh", "statusline.py",
-    "update.sh", "update_kb.py", "verify.py", "verify.sh",
-    "devlore", "devlore.sh",
+    "obsidian_setup.py", "optin.py", "query.py",
+    "recheck.py", "remove_codebase.py", "status.py",
+    "statusline-wrapper.sh", "statusline.py",
+    "update_kb.py", "verify.py",
 ]
 # PAYLOAD_SCRIPTS kept as the union for back-compat with code that iterates it
 # (notably scripts/build_dist.py, scripts/update_kb.py). New code should prefer
@@ -68,7 +67,9 @@ PAYLOAD_LOCAL = [
 PAYLOAD_SCRIPTS = sorted(set(PAYLOAD_SHARED) | set(PAYLOAD_LOCAL))
 PAYLOAD_HOOKS = ["capture_gate.py", "pre-compact.py", "session-end.py",
                  "session-start.py", "stop.py"]
-PAYLOAD_ROOT = ["AGENTS.md", "uv.lock", ".gitignore"]  # pyproject.toml ships as a stub below
+# v0.9.27: uv.lock is no longer per-KB (single shared venv at ~/.devlore/.venv/);
+# pyproject.toml ships as a no-deps stub from dist-assets/kb-pyproject.toml.
+PAYLOAD_ROOT = ["AGENTS.md", ".gitignore"]  # pyproject.toml shipped as a stub below
 PAYLOAD_CLAUDE = ["settings.json"]  # + commands/ tree
 # Claude fires SessionEnd only at session end and PreCompact only on compaction,
 # so a long session captures nothing until one of those — Stop (every turn) runs
@@ -95,8 +96,13 @@ def _rewrite(text: str, target: Path) -> str:
     distribution works no matter where it was cloned. The placeholder literal is
     split below because this file is itself materialized through this rewrite —
     an intact literal would be resolved to the KB path, corrupting the installed
-    copy's ability to resolve future placeholders."""
+    copy's ability to resolve future placeholders.
+
+    `__DEVLORE_BIN_DIR__` resolves to `$HOME/.devlore/bin` (the centralized
+    launcher location, used by the Obsidian plugin's allowlist constants since
+    v0.9.27). It is NOT kb-scoped — those shims live in one place globally."""
     return (text.replace(str(SOURCE_ROOT), str(target))
+                .replace("__DEVLORE_BIN_DIR__", str(Path.home() / ".devlore" / "bin"))
                 .replace("__DEVLORE" + "_HOME__", str(target)))
 
 
@@ -140,6 +146,50 @@ def _shared_lib_installed(source_version: str) -> bool:
         return False
 
 
+def _install_shared_venv(source_root: Path, source_version: str, dry: bool = False) -> bool:
+    """Materialize ~/.devlore/.venv/ with deps from dist/lib/pyproject.toml.
+    Idempotent via ~/.devlore/.venv/DEVLORE_VERSION stamp; returns False when
+    already at source_version. Falls back to a no-op (warns) if uv is unavailable."""
+    venv = Path.home() / ".devlore" / ".venv"
+    stamp = venv / "DEVLORE_VERSION"
+    try:
+        if stamp.exists() and stamp.read_text(encoding="utf-8").strip() == source_version \
+                and (venv / "bin" / "python3").exists():
+            return False
+    except OSError:
+        pass
+    if dry:
+        return True
+    venv.mkdir(parents=True, exist_ok=True)
+    pyproject = source_root / "dist-assets" / "lib" / "pyproject.toml"
+    if not pyproject.exists():
+        # Source-of-truth checkout mid-refactor — silently skip; the launcher
+        # falls back to `python3` without a venv in that case (init_kb also
+        # handles `_install_shared_lib`'s same fallback path).
+        print(f"  ⚠ {pyproject} missing — skipping shared venv install (using system python3)")
+        return False
+    uv_check = subprocess.run(["uv", "--version"], capture_output=True, text=True)
+    if uv_check.returncode != 0:
+        print(f"  ⚠ uv not on PATH — shared venv install skipped (using system python3)")
+        return False
+    r = subprocess.run(["uv", "venv", "--python", "3.12", str(venv)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"  ⚠ uv venv failed: {r.stderr.strip()[:160]}")
+        return False
+    # Read the dependency list from the shared lib's pyproject.toml and install
+    # via uv pip. Avoids needing a second pyproject file in the repo.
+    pip = subprocess.run(
+        ["uv", "pip", "install", "--python", str(venv / "bin" / "python3"),
+         "claude-agent-sdk>=0.1.29", "python-dotenv>=1.0.0", "tzdata>=2024.1"],
+        capture_output=True, text=True)
+    if pip.returncode != 0:
+        print(f"  ⚠ shared venv pip install failed: {pip.stderr.strip()[:160]}")
+        return False
+    stamp.write_text(source_version + "\n", encoding="utf-8")
+    return True
+
+
 def _install_shared_lib(source_root: Path, source_version: str, dry: bool = False) -> bool:
     """Copy `source_root/dist-assets/lib/` into ~/.devlore/lib/. Stamps VERSION.
     Idempotent: returns False when the installed version already meets source_version.
@@ -171,25 +221,37 @@ def _install_shared_lib(source_root: Path, source_version: str, dry: bool = Fals
             shutil.copy2(f, dst)
     # Stamp the version so future init/update runs know to skip.
     (lib_dst / "VERSION").write_text(source_version + "\n", encoding="utf-8")
-    # Also write the launcher to ~/.devlore/bin/ so a `devlore` PATH symlink works.
-    launcher_src = lib_src / "bin" / "devlore"
-    if launcher_src.exists():
-        launcher_dst = Path.home() / ".devlore" / "bin" / "devlore"
-        launcher_dst.parent.mkdir(parents=True, exist_ok=True)
-        launcher_dst.write_text(
-            launcher_src.read_text(encoding="utf-8"), encoding="utf-8")
-        launcher_dst.chmod(0o755)
+    # Also write the launcher + sibling shims to ~/.devlore/bin/ so a `devlore`
+    # PATH symlink works AND the Obsidian plugin's allowlist (which now points at
+    # ~/.devlore/bin/<name>.sh shims, post-v0.9.27) resolves to real files.
+    bin_dst = Path.home() / ".devlore" / "bin"
+    launcher_src = lib_src / "bin"
+    if launcher_src.is_dir():
+        for f in sorted(launcher_src.iterdir()):
+            if not f.is_file():
+                continue
+            dst = bin_dst / f.name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                text = f.read_text(encoding="utf-8")
+                dst.write_text(text, encoding="utf-8")
+                dst.chmod(f.stat().st_mode | 0o111)  # always executable
+            except UnicodeDecodeError:
+                shutil.copy2(f, dst)
+                dst.chmod(f.stat().st_mode | 0o111)
         # Repoint ~/.local/bin/devlore → ~/.devlore/bin/devlore (best-effort;
         # install.sh already does this for fresh installs, but a KB created via
         # init alone still gets the global entrypoint).
-        link = Path.home() / ".local" / "bin" / "devlore"
-        if link.parent.exists() or link.parent.mkdir(parents=True, exist_ok=True) or True:
-            try:
-                if link.exists() or link.is_symlink():
-                    link.unlink()
-                link.symlink_to(launcher_dst)
-            except OSError:
-                pass  # ~/.local/bin may not exist or be writable — non-fatal.
+        global_devlore = bin_dst / "devlore"
+        if global_devlore.exists():
+            link = Path.home() / ".local" / "bin" / "devlore"
+            if link.parent.exists() or link.parent.mkdir(parents=True, exist_ok=True) or True:
+                try:
+                    if link.exists() or link.is_symlink():
+                        link.unlink()
+                    link.symlink_to(global_devlore)
+                except OSError:
+                    pass  # ~/.local/bin may not exist or be writable — non-fatal.
     return True
 
 
@@ -226,8 +288,18 @@ def _merge_hook_file(
             return f"⚠ {settings_path} unreadable — hooks NOT registered (register manually)"
     hooks = settings.setdefault("hooks", {})
     added = []
+    # v0.9.27: hooks now spawn under the shared venv at ~/.devlore/.venv/bin/python3,
+    # not a per-KB `uv run`. The launcher relies on PYTHONPATH-finding the shared
+    # lib via the `capture_config`/`transcripts` modules; the hooks themselves only
+    # import stdlib + claude_agent_sdk.
+    pybin = str(Path.home() / ".devlore" / ".venv" / "bin" / "python3")
+    if not Path(pybin).exists():
+        # Fallback for a half-installed system (the launcher also handles this);
+        # `uv run` would auto-materialize a per-KB venv, which is what we're moving
+        # away from — so we use `python3` (system) and rely on hook PYTHONPATH.
+        pybin = "python3"
     for ev in events:
-        cmd = f"uv run --directory {kb} python hooks/{scripts[ev]}"
+        cmd = f"{pybin} {kb}/hooks/{scripts[ev]}"
         groups = hooks.setdefault(ev, [])
         already = any(h.get("command") == cmd
                       for g in groups for h in g.get("hooks", []))
@@ -392,12 +464,21 @@ def main() -> None:
                        capture_output=True, cwd=str(kb))
     print("  ✓ knowledge/ + daily/ skeletons (+ empty generated index.md)")
 
-    # 6. venv (git commit happens LAST, after the optional Obsidian layer)
+    # 6. shared venv at ~/.devlore/.venv/ (single install for all KBs — v0.9.27+).
+    # Each KB used to run `uv sync --directory <kb>` here, materializing a per-KB
+    # .venv/ — four times the work for one set of dependencies. Now there's one
+    # ~/.devlore/.venv/ and every Python script (KB-local or shared) runs under
+    # it via the global launcher's DEVLORE_PY resolution.
     if not dry:
-        r = subprocess.run(["uv", "sync", "--directory", str(kb)],
-                           capture_output=True, text=True)
-        print(f"  {'✓' if r.returncode == 0 else '⚠'} uv sync "
-              f"({'ok' if r.returncode == 0 else r.stderr.strip()[:120]})")
+        if _install_shared_venv(SOURCE_ROOT, source_version):
+            print(f"  ✓ shared venv at ~/.devlore/.venv (v{source_version})")
+        else:
+            print(f"  · shared venv already at v{source_version} or newer (skipped)")
+        # Belt and braces: nuke any leftover per-KB .venv/ from a pre-v0.9.27 install.
+        legacy = kb / ".venv"
+        if legacy.is_dir():
+            shutil.rmtree(legacy, ignore_errors=True)
+            print(f"  ✓ removed legacy per-KB .venv/ (centralization complete)")
 
     # 7. multi-KB registry (owning-KB routing + status-line dispatch).
     #    Two files in parallel:

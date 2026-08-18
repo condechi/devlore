@@ -45,7 +45,11 @@ PLACEHOLDER = "__DEVLORE" + "_HOME__"
 # runtime files (state.json, markers, capture-roots, code-roots, logs) are
 # never listed in the dist and therefore never touched.
 SURFACES = ["scripts", "hooks", ".claude/commands"]
-ROOT_FILES = ["AGENTS.md", "uv.lock", ".gitignore",
+# v0.9.27: uv.lock is no longer per-KB (single shared venv at ~/.devlore/.venv/);
+# pyproject.toml ships as a no-deps stub from dist-assets/kb-pyproject.toml and
+# intentionally NOT in ROOT_FILES so a future path-preserving rewrite doesn't
+# clobber user's hand-edits.
+ROOT_FILES = ["AGENTS.md", ".gitignore",
               ".claude/settings.json", "VERSION"]
 # pyproject.toml ships as a stub (per-KB; deps live in ~/.devlore/lib/) — see
 # _migrate_to_shared_layout. Not in ROOT_FILES so it doesn't get overwritten
@@ -53,7 +57,11 @@ ROOT_FILES = ["AGENTS.md", "uv.lock", ".gitignore",
 
 
 def _rewrite(text: str, src: Path, kb: Path) -> str:
-    return text.replace(PLACEHOLDER, str(kb)).replace(str(src), str(kb))
+    # v0.9.27+: resolve __DEVLORE_BIN_DIR__ to ~/.devlore/bin (the Obsidian plugin's
+    # allowlist constants point at the centralized bin shims, not at the KB path).
+    return (text.replace("__DEVLORE_BIN_DIR__", str(Path.home() / ".devlore" / "bin"))
+                .replace(PLACEHOLDER, str(kb))
+                .replace(str(src), str(kb)))
 
 
 def _rewire_capture_hooks(kb: Path) -> None:
@@ -244,10 +252,18 @@ def _install_shared_lib(src: Path, version: str) -> bool:
             text = f.read_text(encoding="utf-8")
             text = text.replace(str(src), str(lib_dst))
             dst.write_text(text, encoding="utf-8")
-            dst.chmod(f.stat().st_mode)
+            # Anything under bin/ is meant to be executable (the launcher +
+            # the seven Obsidian-plugin shims); force +x even if the source's
+            # recorded mode didn't carry it across git's content-only diffs.
+            mode = f.stat().st_mode
+            if rel.parts and rel.parts[0] == "bin":
+                mode = mode | 0o111
+            dst.chmod(mode)
             n += 1
         except UnicodeDecodeError:
             shutil.copy2(f, dst)
+            if rel.parts and rel.parts[0] == "bin":
+                dst.chmod(dst.stat().st_mode | 0o111)
             n += 1
     (lib_dst / "VERSION").write_text(version + "\n", encoding="utf-8")
     print(f"  ✓ installed shared lib at ~/.devlore/lib + bin (v{version}, {n} files)")
@@ -394,11 +410,22 @@ def main() -> None:
                     if f.is_file():
                         _copy(f, kb / ".obsidian" / "plugins" / plug.name / f.name, src, kb)
                         n += 1
-    # The CLI launcher is symlinked onto PATH (install.sh) and must stay executable
-    # regardless of the mode the dist recorded for it — guarantee it here.
-    cli = kb / "scripts" / "devlore"
-    if cli.exists():
-        cli.chmod(cli.stat().st_mode | 0o111)
+    # v0.9.27: the per-KB <kb>/scripts/devlore copy and the per-KB .venv/ are gone.
+    # If a stale install still carries them, drop them here so the diff is final.
+    legacy = kb / "scripts" / "devlore"
+    if legacy.exists():
+        legacy.unlink()
+        print(f"  ✓ removed legacy per-KB scripts/devlore (global launcher is canonical)")
+    legacy_v = kb / ".venv"
+    if legacy_v.is_dir():
+        shutil.rmtree(legacy_v, ignore_errors=True)
+        # The .gitignore already excludes .venv/ — make the deletion explicit so a
+        # human review of `git status` sees the intent.
+        (kb / "scripts" / ".venv-removed-by-v0927").write_text(
+            "per-KB .venv/ was removed in v0.9.27 (centralized at ~/.devlore/.venv/).\n"
+            "If you find this marker, run `devlore update` to restore the shared venv.\n",
+            encoding="utf-8")
+        print(f"  ✓ removed legacy per-KB .venv/ (centralized at ~/.devlore/.venv/)")
     extra = f" — capture-config: {capture_note}" if capture_note else ""
     print(f"  ✓ {n} machinery file(s) refreshed (knowledge/daily/config untouched){extra}")
 
@@ -422,8 +449,13 @@ def main() -> None:
             if nm and not nm.startswith("#"):
                 git_exclude(kb, nm, add=True)
 
-    r = subprocess.run(["uv", "sync", "--directory", str(kb)], capture_output=True, text=True)
-    print(f"  {'✓' if r.returncode == 0 else '⚠'} uv sync")
+    # v0.9.27: ensure the shared venv at ~/.devlore/.venv/ is at the dist version.
+    # Per-KB `uv sync` is gone — one venv serves all KBs. The installer is a
+    # no-op when the stamp matches, so a steady-state update doesn't pay for
+    # a fresh pip install.
+    from init_kb import _install_shared_venv
+    if _install_shared_venv(src, version):
+        print(f"  ✓ shared venv installed at ~/.devlore/.venv (v{version})")
 
     subprocess.run(["git", "-C", str(kb), "add", "-A"], capture_output=True)
     c = subprocess.run(["git", "-C", str(kb), "commit", "-q", "-m",

@@ -201,6 +201,54 @@ instead of `uv run` directly; the launcher injects `DEVLORE_KB_ROOT` and
 KB-local files (was ~53, now ~30), and a fix to `kb_registry.py` lands once
 instead of N times.
 
+### 7b. Single global launcher + shared venv (v0.9.27)
+
+Two redundancies from the v0.9.25 split remained parked:
+the per-KB `scripts/devlore` copy (and seven sibling `.sh` shells —
+`compile.sh`, `status.sh`, `update.sh`, `query.sh`, `recheck.sh`, `verify.sh`,
+`devlore.sh`) that every KB still carried to host logic the global launcher
+couldn't run on its own, and the per-KB `.venv/` materialized each time hooks
+spawned as `uv run --directory <kb>` — four identical venvs per user, four
+`uv sync` runs per update for nothing.
+
+The v0.9.27 collapse:
+
+- **One launcher.** `scripts/devlore` is the *complete* dispatcher now: the
+  case-branch table, `status` walker, and the help heredoc all live in the
+  file that ships at `~/.devlore/bin/devlore`. The per-KB `scripts/devlore`
+  and seven `scripts/*.sh` siblings are dropped from the install payload
+  (~30 → 19 KB-aware Python scripts per KB). A fix lands once — at the source
+  — and reaches every KB on the next update.
+- **One venv.** Every Python invocation (KB-local scripts and shared ones
+  alike) resolves `~/.devlore/.venv/bin/python3`. The per-KB
+  `pyproject.toml` stub loses its dependency list (it's now
+  `name = "devlore-kb-stub"` with no deps); the dist's `uv.lock` is no longer
+  carried per-KB. `devlore init` and `devlore update` call a new
+  `_install_shared_venv` once instead of running `uv sync --directory <kb>`
+  four times.
+- **Hooks** change from `uv run --directory <kb> python hooks/<name>.py` to
+  `<venv-python> <kb>/hooks/<name>.py`. The five hook files are unchanged;
+  they resolve their imports the same way they did before.
+- **Slash commands** (`/devlore`, `/ask`, `/compile`, `/verify`) move from
+  `Bash(<kb>/scripts/devlore:*)` allowlists to `Bash(devlore:*)`, routing
+  through the global launcher on PATH.
+- **Obsidian plugin** keeps the same allowlist of seven shims, but each
+  `scripts/<name>.sh` path is replaced by a `~/.devlore/bin/<name>.sh` shim
+  that `exec`s `devlore <sub> "$@"`. The Obsidian plugin's allowlist
+  auditability is preserved verbatim; the seven shims are 4-line
+  `exec`-forwarders.
+
+The KB's per-KB `pyproject.toml` `v0924.bak` backup added in v0.9.25 stays;
+the v0.9.27 update additionally removes any `scripts/devlore` and
+`<kb>/.venv/` left over from a pre-v0.9.27 install and writes a
+`scripts/.venv-removed-by-v0927` marker so the deletion is visible in
+`git status` (the marker itself is on the update path: subsequent updates
+quietly overwrite it when the centralization is complete).
+
+Net effect: from v0.9.27 onward, a launcher fix is a one-place edit, a fresh
+`devlore update` installs one venv instead of four, and the seven per-KB
+shell scripts are gone.
+
 ### 8. Capture-config preservation (v0.9.26)
 
 The one file under `<kb>/scripts/` that the user customizes is
