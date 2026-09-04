@@ -1,31 +1,41 @@
 #!/usr/bin/env bash
-# devlore — global launcher (v0.9.25+).
+# devlore — global launcher (v0.9.27+, complete dispatcher).
 #
-# Lives at ~/.devlore/bin/devlore. Symlinked to ~/.local/bin/devlore so a bare
-# `devlore` works from any directory. All KBs share this single binary; routing
-# lives in kb_registry.py (also shared, at ~/.devlore/lib/).
+# v0.9.27 collapses what used to live in <kb>/scripts/devlore + seven sibling
+# shells (compile.sh, status.sh, update.sh, query.sh, recheck.sh, verify.sh,
+# devlore.sh) into this single canonical file. Lives at ~/.devlore/bin/devlore
+# and is shipped via dist/lib/bin/devlore. Per-KB scripts/ now ships ONLY the
+# KB-aware payload (Python scripts + hooks); the dispatcher itself lives here
+# so a fix lands once for every KB.
 #
-# Cwd-decoupling (v0.9.24+): the launcher self-locates to its own home FIRST,
-# then asks `kb_registry.py resolve` whether a DIFFERENT KB is a better fit —
-# one the cwd is inside, or the default — and re-execs THAT KB's launcher. So
-# `devlore ask "..."` works from anywhere, not just from inside a KB.
-# `--kb <name>` is the explicit spelling; `--kb <path>` still works.
+# Self-update-safe: the body lives inside main() called as `main "$@"; exit $?`
+# on one line, so bash parses the entire script before executing. A `devlore
+# update` that rewrites this file in place doesn't trip bash's stale-byte-offset
+# resume bug.
+#
+# Cwd-decoupling (v0.9.24+): the global launcher (this file) resolves the KB
+# from cwd / default / --kb <name|path>, then runs the resolved command in
+# that KB's context. Bare `devlore ask "..."` works from anywhere, not just
+# from inside a KB.
+#
+# Python resolution: every script (KB-local or shared) runs under
+# `~/.devlore/.venv/bin/python3` (single shared venv for all KBs, installed
+# by init_kb / update_kb from dist/lib/pyproject.toml). DEVLORE_KB_ROOT=$KB is
+# always injected so the shared modules at ~/.devlore/lib/ find the right KB.
 main() {
 set -uo pipefail
 
-# The caller's shell directory, captured BEFORE PY() runs scripts via
-# `uv run --directory "$KB"` (which starts Python inside the KB). add/remove
-# resolve a relative path argument like `.` against this, so it means the
-# directory you ran devlore FROM — not the KB (utils.resolve_invocation_path).
-# kb_registry.py reads it for cwd-decoupled read commands.
+# The caller's shell directory, captured BEFORE we re-exec or invoke a script.
+# add/remove resolve a relative path argument like `.` against this (utils.
+# resolve_invocation_path), so it means the directory the user ran devlore
+# FROM — not the KB (uv run --directory $KB would chdir inside).
 export DEVLORE_INVOCATION_CWD="$PWD"
 
 # Resolve symlinks so DEVLORE_HOME is the real devlore home even when devlore
 # is invoked through a symlink on PATH (install.sh links ~/.local/bin/devlore
-# → ~/.devlore/bin/devlore). The bare PATH symlink is the one AMBIGUOUS way
-# in: mark it so add/remove can route to the owning KB. A full-path launcher
-# means "this home", so the marker is explicitly cleared (it may linger in
-# the environment).
+# → ~/.devlore/bin/devlore). A bare PATH symlink is one ambiguous way in: mark
+# it so add/remove can route to the owning KB (kb_resolve.py). A full-path
+# launcher means "this home", so the marker is cleared (it may linger).
 src="${BASH_SOURCE[0]:-$0}"
 if [ -h "$src" ]; then
   export DEVLORE_VIA_PATH_SYMLINK=1
@@ -39,14 +49,43 @@ while [ -h "$src" ]; do
 done
 DEVLORE_HOME="$(cd -P "$(dirname "$src")/.." >/dev/null 2>&1 && pwd)"
 DEVLORE_LIB="$DEVLORE_HOME/lib"
+DEVLORE_VENV="$DEVLORE_HOME/.venv"
 
-# Registry calls (no KB needed): run with PYTHONPATH=~/.devlore/lib so the
-# shared kb_registry module is importable. Plain python3 — no venv, no deps.
-REG() { PYTHONPATH="$DEVLORE_LIB:${PYTHONPATH:-}" python3 "$DEVLORE_LIB/kb_registry.py" "$@"; }
+# Python interpreter: the shared venv at ~/.devlore/.venv/bin/python3. Falls back
+# to /usr/bin/env python3 if the venv hasn't been installed yet (devlore init /
+# update builds it on first run; the fallback lets the launcher self-bootstrap
+# from a fresh git clone of the dist — the venv installer also speaks python3).
+DEVLORE_PY="$DEVLORE_VENV/bin/python3"
+if [ ! -x "$DEVLORE_PY" ]; then
+  DEVLORE_PY="$(command -v python3)"
+fi
 
-# `--kb <value>` lives inside the `add`/`remove` branches below (those are
-# the only subcommands that accept `--kb` — query/compile/etc. would reject
-# the rewrite with argparse errors).
+# Run a Python script — KB-local or shared — under the shared venv with
+# DEVLORE_KB_ROOT pointing at the active KB. KB-local scripts live in
+# $KB/scripts/; SHARED ones (config, utils, kb_resolve, kb_registry,
+# capture_config, transcripts, activity, kb_commit, staleness, stamp_baseline)
+# live in $DEVLORE_LIB/ and resolve their paths from DEVLORE_KB_ROOT
+# at call time (never baked paths — see init_kb.PAYLOAD_SHARED).
+PY() {
+  local _script="$1"; shift
+  local _kb_script="$KB/scripts/$_script"
+  if [ ! -f "$_kb_script" ] && [ -f "$DEVLORE_LIB/$_script" ]; then
+    _kb_script="$DEVLORE_LIB/$_script"
+  fi
+  DEVLORE_KB_ROOT="$KB" \
+  PYTHONPATH="$DEVLORE_LIB:${PYTHONPATH:-}" \
+  DEVLORE_HOME="$DEVLORE_HOME" \
+    "$DEVLORE_PY" "$_kb_script" "$@"
+}
+
+# Registry-only paths (no KB needed; pure stdlib). Run with PYTHONPATH pointing
+# at the shared lib so the shared kb_registry module is importable.
+REG() { PYTHONPATH="$DEVLORE_LIB:${PYTHONPATH:-}" "$DEVLORE_PY" "$DEVLORE_LIB/kb_registry.py" "$@"; }
+
+# `--kb <value>` stripping: query/compile/etc. don't accept --kb (their argparse
+# would error). Strip it from $@ so the routed script only sees what it expects.
+# add/remove DO accept --kb but want `--kb <name>` to resolve to a path BEFORE
+# the per-script call, so they re-use the same helper internally.
 _strip_kb() {
   _out=()
   _sn=0
@@ -57,11 +96,10 @@ _strip_kb() {
   done
 }
 
+# `list`, `use`, and `version` have NO KB context — pure registry operations.
+# Handle them first so a fresh install can run `devlore` / `devlore use` /
+# `devlore version` before any KB is registered.
 cmd="${1:-list}"
-
-# `list`, `use`, and the bare invocation have NO KB context — they're pure
-# registry operations. Handle them first, before any KB resolution, so a
-# fresh install can run `devlore` / `devlore use` from anywhere.
 case "$cmd" in
   list|"")
     REG list --human
@@ -79,9 +117,7 @@ case "$cmd" in
 esac
 
 # Active KB resolution: every other subcommand runs in some KB's context.
-# `which` and the cwd-decoupling pre-pass both use this resolution. The pre-pass
-# for read commands (ask|status|compile|…) re-execs the resolved KB's launcher
-# so the user-visible PATH entrypoint stays global.
+# `which` and the cwd-decoupling pre-pass both use this resolution.
 explicit=""
 prev=""
 for a in "$@"; do
@@ -98,46 +134,31 @@ if [ -z "$KB" ]; then
        "\`devlore init <dir>\` to create one." >&2
   exit 1
 fi
-# Verify the KB still has its launcher (a broken update is loud instead of silent).
-if [ ! -x "$KB/scripts/devlore" ]; then
-  echo "KB at $KB has no scripts/devlore — re-run \`devlore update\`." >&2
-  exit 1
-fi
 
-# Cwd-decoupling pre-pass for read commands. Each read cmd's logic still
-# lives in the per-KB launcher copy (the file with `cat <<EOF` for help, the
-# status walker, etc.) — the global launcher just routes to it.
+# The status walker + the help text + every command body used to live in
+# <kb>/scripts/devlore — that file is gone as of v0.9.27. The single global
+# launcher here is the dispatcher for everything else.
 case "$cmd" in
-  ask|status|compile|verify|recheck|docs|backfill|obsidian)
-    if [ "$cmd" != "status" ] && [ "$cmd" != "help" ] && [ "$cmd" != "--help" ] && [ "$cmd" != "-h" ]; then
-      # Verify-style read commands are pure-Python; route to the per-KB
-      # launcher which injects DEVLORE_KB_ROOT + PYTHONPATH=~/.devlore/lib.
-      _strip_kb "$@"
-      exec "$KB/scripts/devlore" "${_out[@]}"
-    fi
-    ;;
-esac
-
-# Commands that always run in the active KB's context:
-case "$cmd" in
+  # ── bare metadata ─────────────────────────────────────────────────────
   which)     echo "$KB" ;;
+
+  # ── KB-local actions ──────────────────────────────────────────────────
   add)
     _strip_kb "${@:2}"
     _add_args=("${_out[@]}")
+    # `--kb <name>` → path before add_codebase.py sees it.
     for ((_i = 0; _i < ${#_add_args[@]}; _i++)); do
       if [ "${_add_args[$_i]}" = "--kb" ] && [ $((_i+1)) -lt ${#_add_args[@]} ]; then
         _v="${_add_args[$((_i+1))]}"
-        case "$_v" in
-          /*|~*) ;;  # absolute path — pass through
-          *)
-            _r="$(REG resolve --cwd "$PWD" --explicit "$_v" 2>/dev/null | tail -n1)"
-            [ -n "$_r" ] && _add_args[$((_i+1))]="$_r"
-            ;;
+        case "$_v" in /*|~*) ;; *)
+          _r="$(REG resolve --cwd "$PWD" --explicit "$_v" 2>/dev/null | tail -n1)"
+          [ -n "$_r" ] && _add_args[$((_i+1))]="$_r"
+        ;;
         esac
         break
       fi
     done
-    exec "$KB/scripts/devlore" add "${_add_args[@]}"
+    PY add_codebase.py "${_add_args[@]}"
     ;;
   remove)
     _strip_kb "${@:2}"
@@ -145,27 +166,156 @@ case "$cmd" in
     for ((_i = 0; _i < ${#_rm_args[@]}; _i++)); do
       if [ "${_rm_args[$_i]}" = "--kb" ] && [ $((_i+1)) -lt ${#_rm_args[@]} ]; then
         _v="${_rm_args[$((_i+1))]}"
-        case "$_v" in
-          /*|~*) ;;
-          *)
-            _r="$(REG resolve --cwd "$PWD" --explicit "$_v" 2>/dev/null | tail -n1)"
-            [ -n "$_r" ] && _rm_args[$((_i+1))]="$_r"
-            ;;
+        case "$_v" in /*|~*) ;; *)
+          _r="$(REG resolve --cwd "$PWD" --explicit "$_v" 2>/dev/null | tail -n1)"
+          [ -n "$_r" ] && _rm_args[$((_i+1))]="$_r"
+        ;;
         esac
         break
       fi
     done
-    exec "$KB/scripts/devlore" remove "${_rm_args[@]}"
+    PY remove_codebase.py "${_rm_args[@]}"
     ;;
-  update)    exec "$KB/scripts/devlore" update "${@:2}" ;;
-  obsidian)  exec "$KB/scripts/devlore" obsidian "${@:2}" ;;
-  init)      exec "$KB/scripts/devlore" init "${@:2}" ;;
-  status)    exec "$KB/scripts/devlore" status ;;
+  update)    PY update_kb.py "${@:2}" ;;
+  obsidian)  PY obsidian_setup.py "${@:2}" ;;
+  init)      PY init_kb.py "${@:2}" ;;
+
+  # ── read commands (cwd-decoupled) ────────────────────────────────────
+  ask)        _strip_kb "${@:2}"; PY query.py "${_out[@]}" ;;
+  compile)    PY compile.py "${@:2}" ;;
+  verify)     PY verify.py "${@:2}" ;;
+  backfill)   PY ingest_all_context.py "${@:2}" ;;
+  docs)       PY ingest_doc.py "${@:2}" && PY compile.py ;;
+  recheck)    PY recheck.py "${@:2}" ;;
+
+  # ── status walker: deterministic local view ──────────────────────────
+  status)
+    echo "devlore v$(cat "$DEVLORE_LIB/VERSION" 2>/dev/null || echo dev) — knowledge base: $KB"
+    total=0; parts=""
+    for d in concepts connections qa mocs; do
+      c=$(ls "$KB/knowledge/$d"/*.md 2>/dev/null | wc -l | tr -d ' ')
+      total=$((total + c)); parts="$parts$c $d, "
+    done
+    echo "  articles:     $total  (${parts%, })"
+    echo "                knowledge/index.md is the catalog"
+    dl=$(ls "$KB"/daily/2*.md 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$dl" -gt 0 ]; then
+      first=$(basename "$(ls "$KB"/daily/2*.md | head -1)" .md)
+      last=$(basename "$(ls "$KB"/daily/2*.md | tail -1)" .md)
+      echo "  dailies:      $dl daily log(s), $first → $last"
+    else
+      echo "  dailies:      none yet"
+    fi
+    mk=$(ls "$KB"/scripts/flush-marker-*.json 2>/dev/null | wc -l | tr -d ' ')
+    echo "  sessions:     $mk conversation(s) captured"
+    q=$(ls "$KB"/quarantine/*.md 2>/dev/null | wc -l | tr -d ' ')
+    [ "$q" -gt 0 ] && echo "  quarantine:   $q conversation(s) awaiting review"
+    echo "  capture roots (live conversation capture is on for):"
+    grep -v '^\s*#\|^\s*$' "$KB/scripts/capture-roots" 2>/dev/null | sed 's/^/    /' \
+      || echo "    (none — run: devlore add <codebase>)"
+    cr=$(grep -v '^\s*#\|^\s*$' "$KB/scripts/code-roots" 2>/dev/null | tr '\n' ' ')
+    [ -n "$cr" ] && echo "  code roots:   $cr"
+    ledger=$("$DEVLORE_PY" -c "import json; d = json.load(open('$KB/scripts/state.json')); print('%.2f USD total compile/query spend, %d question(s) answered' % (d.get('total_cost', 0), d.get('query_count', 0)))" 2>/dev/null)
+    [ -n "$ledger" ] && echo "  ledger:       $ledger"
+    echo "  recent commits:"
+    git -C "$KB" log --oneline -3 2>/dev/null | sed 's/^/    /'
+    PY staleness.py | head -3
+    ;;
+
+  # ── help: long form heredoc ───────────────────────────────────────────
   help|--help|-h)
-    exec "$KB/scripts/devlore" help
+cat <<EOF
+devlore v$(cat "$DEVLORE_LIB/VERSION" 2>/dev/null || echo dev) — your AI conversations, compiled into a self-checking knowledge base
+KB: $KB
+shared venv: $DEVLORE_VENV  (python: $DEVLORE_PY)
+
+The loop: every Claude Code or Codex session in an opted-in codebase is captured into
+daily/ logs; \`compile\` distills them into wiki articles under knowledge/; the
+article index is injected into each new session, so your assistant starts
+already knowing your project's lore.
+
+Managing multiple KBs (v0.9.24+)
+  devlore                     list every registered KB (with the default
+                              marker) — no longer prints help; use \`devlore
+                              help\` for the long form
+  devlore use <name>          set the per-user default KB for read commands
+  devlore which               print the KB the current directory belongs to
+                              (or the default if it doesn't belong to one)
+
+Getting started
+  devlore add <codebase>      opt a repo in: live capture from now on, plus an
+                              offer to backfill THIS codebase's past conversations
+                              and ingest its markdown docs (git-aware scan of the
+                              root + first-level dirs; --full-recursive for the
+                              whole tree; --ignore-gitignore also offers gitignored
+                              docs; --compile-pending also compiles any
+                              pending daily logs into articles now)
+  devlore status              what the active KB holds: articles, dailies,
+                              captured sessions, capture roots, spend, staleness
+  devlore ask "question"      cited answer from the active KB (index-guided
+                              retrieval; --dev adds live file:line code
+                              pointers, --file-back saves the answer as a qa/
+                              article). Resolves the right KB from cwd.
+
+Day to day
+  devlore compile             compile pending daily logs into wiki articles
+                              in the active KB (resolved from cwd / default)
+  devlore docs <file|dir>     ingest hand-written markdown, then compile (a dir
+                              scans root + first-level subdirs, git-aware;
+                              --full-recursive scans the whole tree;
+                              --ignore-gitignore also picks up gitignored docs —
+                              research notes you never push)
+  devlore backfill            batch-ingest past conversations (shows a plan and
+                              cost estimate first; add --yes to execute)
+
+Trust & upkeep
+  devlore verify              hallucination + staleness gates (Tier-1/2)
+  devlore recheck             refresh needs-reverification marks after edits
+  devlore remove <codebase>   stop capturing a codebase — knowledge stays; the
+                              code link is kept so existing articles remain
+                              verified (--full disconnects that too)
+  devlore update              refresh this KB's machinery from the latest
+                              release — knowledge/, daily/, and your config are
+                              never touched
+  devlore version             print the installed devlore version
+
+Obsidian (optional)
+  devlore obsidian            add/refresh the optional Obsidian layer in the
+                              active KB — the side-panel plugin + vault config,
+                              so you can open the KB as a vault
+                              (ingest/compile/ask/verify/status from the
+                              palette, ribbon, right-click). Safe to re-run;
+                              prints the one-time activation steps. Use it if
+                              you skipped Obsidian at install time.
+
+Elsewhere
+  devlore init <dir> [...]    bootstrap ANOTHER knowledge base in a new
+                              directory (each KB is independent)
+
+Multi-KB routing: the bare \`devlore\` on PATH resolves each read command to
+the KB the cwd is inside, falling back to the default set by \`devlore use\`;
+\`--kb <name>\` or \`--kb <path>\` overrides.
+
+Single shared venv (v0.9.27+): every script (KB-local or shared) runs under
+\`~/.devlore/.venv/bin/python3\` instead of a per-KB \`.venv/\`. Python deps
+are declared once in dist/lib/pyproject.toml and materialized by
+\`devlore init\` / \`devlore update\`.
+
+Safe by default: backfill and compile show the plan and the bill before
+spending anything, and update never touches what makes the KB yours.
+
+A note on doc ingestion: every accepted file is compiled by the LLM — real
+cost. devlore filters out gitignored, vendored, and third-party markdown
+(git-aware scan + deny-list), but those filters are best-effort: review the
+preview before confirming, especially with --full-recursive or
+--ignore-gitignore (which drops the gitignore filter but keeps the rest).
+EOF
     ;;
+
   *)
-    exec "$KB/scripts/devlore" "$@"
+    echo "devlore: unknown command: $cmd" >&2
+    echo "Try \`devlore help\`." >&2
+    exit 64
     ;;
 esac
 }

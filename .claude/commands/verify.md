@@ -1,7 +1,7 @@
 ---
 description: Verify the knowledge wiki against code — Tier-1 symbol gate + Tier-2 staleness
 argument-hint: "[--article <slug>] [--tier3] [--no-tier2] [--json]"
-allowed-tools: Bash(__DEVLORE_HOME__/scripts/devlore:*), Read
+allowed-tools: Bash(devlore:*), Read
 ---
 
 Run the PR D verification ladder over the compiled knowledge base. **Tier-1** extracts
@@ -16,9 +16,11 @@ Optional arguments: $ARGUMENTS
 
 Do this:
 
-1. Run (the per-KB launcher routes to the right KB and injects `DEVLORE_KB_ROOT`; pass any flags through verbatim):
+1. Run (the single global launcher at `~/.devlore/bin/devlore` resolves the
+   right KB and injects `DEVLORE_KB_ROOT` + `PYTHONPATH=~/.devlore/lib`; pass any
+   flags through verbatim):
 
-   `__DEVLORE_HOME__/scripts/devlore verify $ARGUMENTS`
+   `devlore verify $ARGUMENTS`
 
 2. Report concisely: the Tier-1 confirmed ratio, the benign breakdown (RENAME /
    CORRECT-NEGATIVE), and the **true-misses** (CONVO-SOURCED / COMPILE-FABRICATED) with their

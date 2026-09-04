@@ -676,7 +676,7 @@ uv run python scripts/query.py "What's my error handling strategy?" --file-back
 LLM sees it. With `--file-back`, the agent files a Q&A article in `knowledge/qa/` (with
 `project:` + `type: qa` frontmatter), adds an index row, and appends a `query` entry to
 `knowledge/log.md`. This is the compounding loop - every question makes the KB smarter.
-Thin surfaces: the `/ask` slash command, `scripts/query.sh`, and the devlore Obsidian
+Thin surfaces: the `/ask` slash command, `~/.devlore/bin/query.sh`, and the devlore Obsidian
 plugin's "Ask the devlore knowledge base" command + ribbon button.
 
 ### lint.py - Health Checks
@@ -754,7 +754,7 @@ Add directories like `people/`, `projects/`, `tools/` to `knowledge/`. Define th
 
 The knowledge base is pure markdown with `[[wikilinks]]` - works natively in Obsidian. Point a vault at `knowledge/` for graph view, backlinks, and search. Every article's `tags:` leads with its project slug, so the tag pane, graph filters (`tag:#project-slug`), and Bases views can slice the vault by project out of the box; the curated domain tags behind it power finer filtering.
 
-**Optional side-panel plugin** (`.obsidian/plugins/devlore/`): a single-purpose, hardcoded-script plugin (NOT a general command runner — see the header in `main.js`) that surfaces devlore from the ribbon, command palette, and right-click menu: ingest, compile, ask, **verify**, **status**, **update** (refresh machinery), and **recheck**. Each action runs exactly one venv-python wrapper in `scripts/` (`devlore.sh`, `compile.sh`, `query.sh`, `verify.sh`, `status.sh`, `update.sh`, `recheck.sh` — venv-direct so they work under Obsidian's minimal GUI shell, which has no `uv` on PATH). The install/refresh path is shared by `init_kb --with-obsidian` and the `devlore obsidian` command via `scripts/obsidian_setup.install_obsidian_layer` (one source of truth for the copy + `__DEVLORE_HOME__` rewrite + `app.json`).
+**Optional side-panel plugin** (`.obsidian/plugins/devlore/`): a single-purpose, hardcoded-script plugin (NOT a general command runner — see the header in `main.js`) that surfaces devlore from the ribbon, command palette, and right-click menu: ingest, compile, ask, **verify**, **status**, **update** (refresh machinery), and **recheck**. Each action runs exactly one shim in `~/.devlore/bin/` (`devlore.sh`, `compile.sh`, `query.sh`, `verify.sh`, `status.sh`, `update.sh`, `recheck.sh` — v0.9.27+; each is a 4-line `exec ~/.devlore/bin/devlore <sub>` so the launcher supplies the venv and `PYTHONPATH`, which Obsidian's minimal GUI shell cannot). The install/refresh path is shared by `init_kb --with-obsidian` and the `devlore obsidian` command via `scripts/obsidian_setup.install_obsidian_layer` (one source of truth for the copy + `__DEVLORE_HOME__` rewrite + `app.json`).
 
 - **Adding it after opting out:** `devlore obsidian` installs/refreshes the layer into the current KB, sourcing the plugin bytes from the distribution cache (`~/.devlore/dist`) so a never-opted-in KB still works. `devlore update` refreshes the plugin too, but only for KBs that already have an `.obsidian/` directory.
 - **Activation (new users must do this once):** Obsidian disables third-party plugins until trusted — open the KB as a vault, Settings → Community plugins → turn off Restricted mode (trust author), then toggle `devlore` on. `devlore obsidian` and `init_kb --with-obsidian` both print these steps (`obsidian_setup.activation_steps`).

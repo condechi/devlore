@@ -1,18 +1,14 @@
 [project]
-name = "devlore-kb"
-version = "0.9.25"
-description = "devlore knowledge base (per-KB stub — shared machinery lives at ~/.devlore/lib/)"
+name = "devlore-kb-stub"
+version = "0.9.27"
+description = "devlore knowledge base (per-KB marker only — v0.9.27+ centralizes the venv at ~/.devlore/.venv/ and the launcher at ~/.devlore/bin/devlore)"
 requires-python = ">=3.12"
-# KB-local scripts use the Agent SDK (flush.py, ingest_all_context.py,
-# compile.py, query.py…) inline, so the per-KB .venv/ still needs the deps.
-# The shared lib at ~/.devlore/lib/ also has a pyproject.toml with the same
-# deps — they're declared twice so the .venv/ can be rebuilt standalone. The
-# shared lib BY ITSELF doesn't need a venv (pure stdlib + sibling deps).
-dependencies = [
-    "claude-agent-sdk>=0.1.29",
-    "python-dotenv>=1.0.0",
-    "tzdata>=2024.1",
-]
+# v0.9.27: no per-KB dependencies. The shared machinery's deps live at
+# ~/.devlore/.venv/ and are installed from dist/lib/pyproject.toml once for
+# all KBs by `devlore init` / `devlore update`. This file exists so `uv` and
+# other tooling that reads pyproject.toml still finds a project root, but it
+# must not declare deps that materializes a per-KB .venv on a stray `uv sync`.
+dependencies = []
 
 [tool.ruff]
 line-length = 100

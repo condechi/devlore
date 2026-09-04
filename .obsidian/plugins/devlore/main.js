@@ -5,13 +5,13 @@
  *
  * It adds devlore actions to the command palette, assignable hotkeys, ribbon
  * buttons, and the right-click menu for notes and folders:
- *   - ingest    a note/folder into the KB (scripts/devlore.sh)
- *   - compile   pending daily logs into wiki articles (scripts/compile.sh)
- *   - ask       the KB a question, cited answer (scripts/query.sh)
- *   - verify    the Tier-1/Tier-2 trust gates, no cost (scripts/verify.sh)
- *   - status    one-view KB summary (scripts/status.sh)
- *   - update    refresh this KB's machinery from the latest release (scripts/update.sh)
- *   - recheck   refresh article staleness marks (scripts/recheck.sh)
+ *   - ingest    a note/folder into the KB (~/.devlore/bin/devlore.sh)
+ *   - compile   pending daily logs into wiki articles (~/.devlore/bin/compile.sh)
+ *   - ask       the KB a question, cited answer (~/.devlore/bin/query.sh)
+ *   - verify    the Tier-1/Tier-2 trust gates, no cost (~/.devlore/bin/verify.sh)
+ *   - status    one-view KB summary (~/.devlore/bin/status.sh)
+ *   - update    refresh this KB's machinery from the latest release (~/.devlore/bin/update.sh)
+ *   - recheck   refresh article staleness marks (~/.devlore/bin/recheck.sh)
  * Each action runs ONE hardcoded script from the list below — nothing else.
  *
  * Security design (why this is safer than the Shell Commands plugin):
@@ -32,13 +32,17 @@ const fs = require('fs');
 const path = require('path');
 
 // The only commands this plugin can ever run (all hardcoded — not a general runner).
-const DEVLORE_SH = '__DEVLORE_HOME__/scripts/devlore.sh';
-const COMPILE_SH = '__DEVLORE_HOME__/scripts/compile.sh';
-const QUERY_SH = '__DEVLORE_HOME__/scripts/query.sh';
-const VERIFY_SH = '__DEVLORE_HOME__/scripts/verify.sh';
-const STATUS_SH = '__DEVLORE_HOME__/scripts/status.sh';
-const RECHECK_SH = '__DEVLORE_HOME__/scripts/recheck.sh';
-const UPDATE_SH = '__DEVLORE_HOME__/scripts/update.sh';
+// v0.9.27+: paths now point at `~/.devlore/bin/<name>.sh` shims (replacing the
+// per-KB `scripts/<name>.sh` siblings, removed in v0.9.27). Each shim is a
+// 3-line bash wrapper that `exec`s `devlore <sub> "$@"`, so the plugin's behavior
+// is preserved verbatim — same argv contract, same allowlist semantics.
+const DEVLORE_SH = '__DEVLORE_BIN_DIR__/devlore.sh';
+const COMPILE_SH = '__DEVLORE_BIN_DIR__/compile.sh';
+const QUERY_SH = '__DEVLORE_BIN_DIR__/query.sh';
+const VERIFY_SH = '__DEVLORE_BIN_DIR__/verify.sh';
+const STATUS_SH = '__DEVLORE_BIN_DIR__/status.sh';
+const RECHECK_SH = '__DEVLORE_BIN_DIR__/recheck.sh';
+const UPDATE_SH = '__DEVLORE_BIN_DIR__/update.sh';
 // Heartbeat written by scripts/compile.py while a compile is running.
 const COMPILE_STATUS = '__DEVLORE_HOME__/scripts/compile.status.json';
 // Unified background-activity stream (scripts/activity.py): flush/compile/ingest events.

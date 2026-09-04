@@ -1,7 +1,7 @@
 ---
 description: Ask the knowledge wiki a question (index-guided retrieval, no RAG)
 argument-hint: "\"question\" [--project <slug>] [--file-back] [--dev]"
-allowed-tools: Bash(__DEVLORE_HOME__/scripts/devlore:*), Read
+allowed-tools: Bash(devlore:*), Read
 ---
 
 Answer a question from the compiled knowledge base. The retrieval reads
@@ -17,10 +17,11 @@ Do this:
 
 1. If no question was given, ask the user what they want to know and stop.
 
-2. Run (the per-KB launcher routes to the right KB and injects `DEVLORE_KB_ROOT`
-   + `PYTHONPATH=~/.devlore/lib` so shared machinery resolves to this KB):
+2. Run (the single global launcher at `~/.devlore/bin/devlore` resolves the
+   right KB from cwd / `~/.devlore/registry.json` and injects `DEVLORE_KB_ROOT`
+   + `PYTHONPATH=~/.devlore/lib`):
 
-   `__DEVLORE_HOME__/scripts/devlore ask $ARGUMENTS`
+   `devlore ask $ARGUMENTS`
 
 3. Relay the answer the script prints (it is already cited with `[[wikilinks]]`). Do
    not re-research or pad it.
