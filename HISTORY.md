@@ -255,6 +255,40 @@ Net effect: from v0.9.27 onward, a launcher fix is a one-place edit, a fresh
 `devlore update` installs one venv instead of four, and the seven per-KB
 shell scripts are gone.
 
+### 7c. The update that could not update itself (v0.9.27.1)
+
+v0.9.27 shipped and bricked the first KB that took it. The update ran, deleted
+`<kb>/scripts/devlore` as designed — and then every `devlore` subcommand,
+`devlore update` included, died with *"KB has no scripts/devlore"*. The KB had
+no way back: the command that would have repaired it was the command that was
+broken.
+
+Three defects lined up:
+
+- **The shared lib was only ever installed by the legacy migration branch.**
+  `_install_shared_lib` sat inside `if args.to_new_layout or <KB still has
+  v0.9.24 files>`. A KB already on the v0.9.25 layout matched neither, so
+  `~/.devlore/lib` and `~/.devlore/bin/devlore` froze at whatever version first
+  migrated them while the per-KB payload kept advancing. v0.9.27 then removed
+  the per-KB launcher that the frozen v0.9.25 global launcher hard-requires.
+- **`_install_shared_venv` looked in a path that never exists in a dist.**
+  It read `<src>/dist-assets/lib/pyproject.toml`, but `build_dist` maps that to
+  `lib/pyproject.toml` and a built dist carries no `dist-assets/` at all. It
+  therefore always missed, warned, and returned False — after which the caller
+  deleted the per-KB `.venv` anyway, leaving the KB with no interpreter.
+- **The venv directory was created before that check**, so a skipped install
+  still left an empty `~/.devlore/.venv/` that reads as "installed" to anything
+  testing existence.
+
+The fix inverts the order and the conditionality. The shared lib and shared venv
+are installed on *every* update, before any legacy prune runs, so the
+replacement is in place before the thing it replaces is removed. The per-KB
+`.venv` is now deleted only when a working `~/.devlore/.venv/bin/python3`
+actually exists; otherwise the fallback stays and the update says so. The
+general rule, learned twice now: **never remove the old path until the new one
+is verified present** — an install step that can silently no-op must never be
+paired with a deletion step that cannot.
+
 ### 8. Capture-config preservation (v0.9.26)
 
 The one file under `<kb>/scripts/` that the user customizes is

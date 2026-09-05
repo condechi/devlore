@@ -160,14 +160,23 @@ def _install_shared_venv(source_root: Path, source_version: str, dry: bool = Fal
         pass
     if dry:
         return True
-    venv.mkdir(parents=True, exist_ok=True)
-    pyproject = source_root / "dist-assets" / "lib" / "pyproject.toml"
+    # Layout note: build_dist maps dist-assets/lib/pyproject.toml → lib/pyproject.toml,
+    # so a BUILT dist (what ~/.devlore/dist is) carries it at lib/ and has no
+    # dist-assets/ at all. Looking only under dist-assets/ meant this always
+    # missed against a real dist and silently fell back to system python3 —
+    # while the caller went on to delete the per-KB .venv. Check the dist layout
+    # first, then the source-tree layout for a dev checkout.
+    pyproject = source_root / "lib" / "pyproject.toml"
     if not pyproject.exists():
-        # Source-of-truth checkout mid-refactor — silently skip; the launcher
-        # falls back to `python3` without a venv in that case (init_kb also
-        # handles `_install_shared_lib`'s same fallback path).
-        print(f"  ⚠ {pyproject} missing — skipping shared venv install (using system python3)")
+        pyproject = source_root / "dist-assets" / "lib" / "pyproject.toml"
+    if not pyproject.exists():
+        # Neither layout — skip; the launcher falls back to bare `python3`.
+        # Do NOT create the venv directory before this point: an empty
+        # ~/.devlore/.venv/ reads as "installed" to anything checking existence.
+        print(f"  ⚠ no lib/pyproject.toml under {source_root} — skipping shared "
+              f"venv install (using system python3)")
         return False
+    venv.mkdir(parents=True, exist_ok=True)
     uv_check = subprocess.run(["uv", "--version"], capture_output=True, text=True)
     if uv_check.returncode != 0:
         print(f"  ⚠ uv not on PATH — shared venv install skipped (using system python3)")

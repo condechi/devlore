@@ -377,9 +377,25 @@ def main() -> None:
         migrated = _migrate_to_shared_layout(kb, src, version)
         if not migrated:
             print(f"  · already on the v0.9.25+ layout (no shared files in <kb>/scripts/)")
-        # Ensure the shared lib is at the dist's version even if migration was a no-op.
-        _install_shared_lib(src, version)
-        _repoint_devlore_symlink()
+
+    # The shared lib (the global launcher included) and the shared venv are
+    # refreshed on EVERY update — not, as before, only when the one-time
+    # v0.9.24→v0.9.25 migration branch above happened to fire. A KB already on
+    # the v0.9.25 layout took neither, so ~/.devlore/lib and ~/.devlore/bin
+    # stayed frozen at whatever version first migrated them while the per-KB
+    # payload marched on. At v0.9.27 that combination bricked the KB outright:
+    # the update deleted <kb>/scripts/devlore while ~/.devlore/bin/devlore was
+    # still the v0.9.25 launcher that hard-requires it, so every subcommand —
+    # `devlore update` included — died with "KB has no scripts/devlore".
+    # Both installers are version-stamped no-ops once current, and both run
+    # BEFORE the legacy prunes below so a failure can never leave the KB with
+    # neither the old machinery nor the new.
+    _install_shared_lib(src, version)
+    _repoint_devlore_symlink()
+    from init_kb import _install_shared_venv
+    if _install_shared_venv(src, version):
+        print(f"  ✓ shared venv installed at ~/.devlore/.venv (v{version})")
+    shared_venv_ok = (Path.home() / ".devlore" / ".venv" / "bin" / "python3").exists()
 
     n = 0
     capture_note: str | None = None
@@ -429,7 +445,13 @@ def main() -> None:
             _legacy_sh.unlink()
             print(f"  ✓ removed legacy per-KB scripts/{_sh}.sh (shim is ~/.devlore/bin/{_sh}.sh)")
     legacy_v = kb / ".venv"
-    if legacy_v.is_dir():
+    if legacy_v.is_dir() and not shared_venv_ok:
+        # The replacement is not usable, so the fallback stays. Removing it here
+        # is what left KBs with no Python at all when the shared venv install
+        # silently skipped.
+        print(f"  ⚠ shared venv missing at ~/.devlore/.venv — KEEPING per-KB .venv/ "
+              f"(re-run `devlore update` once uv is available)")
+    elif legacy_v.is_dir():
         shutil.rmtree(legacy_v, ignore_errors=True)
         # The .gitignore already excludes .venv/ — make the deletion explicit so a
         # human review of `git status` sees the intent.
@@ -460,14 +482,6 @@ def main() -> None:
             nm = line.strip()
             if nm and not nm.startswith("#"):
                 git_exclude(kb, nm, add=True)
-
-    # v0.9.27: ensure the shared venv at ~/.devlore/.venv/ is at the dist version.
-    # Per-KB `uv sync` is gone — one venv serves all KBs. The installer is a
-    # no-op when the stamp matches, so a steady-state update doesn't pay for
-    # a fresh pip install.
-    from init_kb import _install_shared_venv
-    if _install_shared_venv(src, version):
-        print(f"  ✓ shared venv installed at ~/.devlore/.venv (v{version})")
 
     subprocess.run(["git", "-C", str(kb), "add", "-A"], capture_output=True)
     c = subprocess.run(["git", "-C", str(kb), "commit", "-q", "-m",
