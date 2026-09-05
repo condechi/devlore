@@ -255,7 +255,7 @@ Net effect: from v0.9.27 onward, a launcher fix is a one-place edit, a fresh
 `devlore update` installs one venv instead of four, and the seven per-KB
 shell scripts are gone.
 
-### 7c. The update that could not update itself (v0.9.27.1)
+### 7c. The update that could not update itself (v0.9.27.1–.2)
 
 v0.9.27 shipped and bricked the first KB that took it. The update ran, deleted
 `<kb>/scripts/devlore` as designed — and then every `devlore` subcommand,
@@ -288,6 +288,15 @@ actually exists; otherwise the fallback stays and the update says so. The
 general rule, learned twice now: **never remove the old path until the new one
 is verified present** — an install step that can silently no-op must never be
 paired with a deletion step that cannot.
+
+A tail followed in v0.9.27.2. `uv venv` refuses outright when a venv already
+exists, and the call passed no `--clear`, so every refresh after the very first
+— a version bump, a dependency change — failed and left the venv pinned at
+whatever version created it. And "verified present" was itself too weak: the
+guard tested only that `bin/python3` existed, which a cleared-but-unpopulated
+venv satisfies. It now runs `import claude_agent_sdk` in that interpreter,
+because what licenses deleting a KB's only other Python is that the replacement
+actually works, not that a file is sitting where one should be.
 
 ### 8. Capture-config preservation (v0.9.26)
 

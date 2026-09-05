@@ -181,7 +181,10 @@ def _install_shared_venv(source_root: Path, source_version: str, dry: bool = Fal
     if uv_check.returncode != 0:
         print(f"  ⚠ uv not on PATH — shared venv install skipped (using system python3)")
         return False
-    r = subprocess.run(["uv", "venv", "--python", "3.12", str(venv)],
+    # --clear: uv refuses outright when a venv already exists, so without it every
+    # refresh after the first (a version bump, a dep change) fails and the venv
+    # stays pinned at whatever version created it.
+    r = subprocess.run(["uv", "venv", "--clear", "--python", "3.12", str(venv)],
                        capture_output=True, text=True)
     if r.returncode != 0:
         print(f"  ⚠ uv venv failed: {r.stderr.strip()[:160]}")

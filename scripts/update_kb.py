@@ -395,7 +395,13 @@ def main() -> None:
     from init_kb import _install_shared_venv
     if _install_shared_venv(src, version):
         print(f"  ✓ shared venv installed at ~/.devlore/.venv (v{version})")
-    shared_venv_ok = (Path.home() / ".devlore" / ".venv" / "bin" / "python3").exists()
+    # "Working" means the deps actually import, not merely that an interpreter
+    # file exists — a cleared-but-unpopulated venv has python3 and nothing else,
+    # and this flag is what licenses deleting the KB's only other interpreter.
+    _shared_py = Path.home() / ".devlore" / ".venv" / "bin" / "python3"
+    shared_venv_ok = _shared_py.exists() and subprocess.run(
+        [str(_shared_py), "-c", "import claude_agent_sdk"],
+        capture_output=True).returncode == 0
 
     n = 0
     capture_note: str | None = None
