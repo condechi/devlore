@@ -98,11 +98,11 @@ def _rewrite(text: str, target: Path) -> str:
     an intact literal would be resolved to the KB path, corrupting the installed
     copy's ability to resolve future placeholders.
 
-    `__DEVLORE_BIN_DIR__` resolves to `$HOME/.devlore/bin` (the centralized
+    The BIN_DIR placeholder resolves to `$HOME/.devlore/bin` (the centralized
     launcher location, used by the Obsidian plugin's allowlist constants since
     v0.9.27). It is NOT kb-scoped — those shims live in one place globally."""
     return (text.replace(str(SOURCE_ROOT), str(target))
-                .replace("__DEVLORE_BIN_DIR__", str(Path.home() / ".devlore" / "bin"))
+                .replace("__DEVLORE" + "_BIN_DIR__", str(Path.home() / ".devlore" / "bin"))
                 .replace("__DEVLORE" + "_HOME__", str(target)))
 
 

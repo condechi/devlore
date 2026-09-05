@@ -298,6 +298,37 @@ venv satisfies. It now runs `import claude_agent_sdk` in that interpreter,
 because what licenses deleting a KB's only other Python is that the replacement
 actually works, not that a file is sitting where one should be.
 
+### 7d. Migrations that land in one pass (v0.9.27.3)
+
+`devlore update` executes whatever `<kb>/scripts/update_kb.py` the KB already
+has. The payload it installs — including that very file — only takes effect on
+the *next* invocation, so every release needed two passes, and the prunes that
+did run ran under code a version older than the payload they were pruning for.
+That is precisely how v0.9.27 came to delete a per-KB launcher using v0.9.26
+logic that had never heard of the global one replacing it.
+
+`update_kb` now snapshots its own bytes at startup and, once the payload is on
+disk and before any prune runs, re-execs the freshly installed copy with the
+same arguments. Migration therefore always executes under the version that
+shipped it. Looping is impossible: the child carries `DEVLORE_UPDATE_REEXEC`,
+and an unchanged file re-execs nothing.
+
+Building that exposed an older bug it had been hiding. `_rewrite` substitutes
+`__DEVLORE_BIN_DIR__` across the payload — and `update_kb.py` *is* payload, with
+that token spelled verbatim in `_rewrite` itself. Installing the file therefore
+rewrote its own source, replacing the token with a hardcoded path, which stopped
+the *next* install from substituting anything. The two failures alternated: one
+update left `update_kb.py` corrupted, the next left the Obsidian plugin's
+allowlist holding raw `__DEVLORE_BIN_DIR__/compile.sh` strings that exec nothing.
+Both states were live at once across a set of installed KBs — some carrying the
+corrupted script, others the broken plugin, depending on which update each had
+last taken.
+
+The `__DEVLORE_HOME__` token had been split into halves years earlier for exactly
+this reason. The lesson simply had not been carried across when the BIN_DIR token
+was added. Both are now built from halves, so neither appears verbatim in a file
+that the rewriter will one day walk over.
+
 ### 8. Capture-config preservation (v0.9.26)
 
 The one file under `<kb>/scripts/` that the user customizes is

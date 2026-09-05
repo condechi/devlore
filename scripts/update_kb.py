@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,15 @@ REPO = "https://github.com/condechi/devlore.git"
 # KB path, corrupting the constant and leaving placeholders unresolved on the
 # NEXT update (same in-band-sentinel class as the flush FLUSH_OK bug).
 PLACEHOLDER = "__DEVLORE" + "_HOME__"
+# Both placeholders are built from halves so they do NOT appear verbatim in this
+# file. _rewrite runs over the payload, and update_kb.py IS payload: a literal
+# token here gets substituted when this file is installed into a KB, leaving the
+# installed copy with a hardcoded path where the token belongs. That silently
+# breaks the next install (the token stops being replaced) and makes the file
+# differ on every update. The HOME token was already split for this reason; the
+# BIN_DIR token added in v0.9.27 was not, and corrupted both this file and the
+# Obsidian plugin's allowlist in alternation.
+BIN_PLACEHOLDER = "__DEVLORE" + "_BIN_DIR__"
 
 # Machinery surfaces re-materialized from the dist. scripts/ and hooks/ copy
 # every file the DIST ships (the dist contains only machinery), so KB-local
@@ -57,9 +67,10 @@ ROOT_FILES = ["AGENTS.md", ".gitignore",
 
 
 def _rewrite(text: str, src: Path, kb: Path) -> str:
-    # v0.9.27+: resolve __DEVLORE_BIN_DIR__ to ~/.devlore/bin (the Obsidian plugin's
-    # allowlist constants point at the centralized bin shims, not at the KB path).
-    return (text.replace("__DEVLORE_BIN_DIR__", str(Path.home() / ".devlore" / "bin"))
+    # v0.9.27+: resolve the BIN_DIR placeholder to ~/.devlore/bin (the Obsidian
+    # plugin's allowlist constants point at the centralized bin shims, not at the
+    # KB path). Both tokens are spelled in halves — see BIN_PLACEHOLDER.
+    return (text.replace(BIN_PLACEHOLDER, str(Path.home() / ".devlore" / "bin"))
                 .replace(PLACEHOLDER, str(kb))
                 .replace(str(src), str(kb)))
 
@@ -321,7 +332,45 @@ def _migrate_to_shared_layout(kb: Path, src: Path, version: str) -> bool:
     return True
 
 
+def _reexec_into_fresh_self(self_path: Path, before: bytes | None) -> None:
+    """Hand the rest of the update to the copy of this file just installed.
+
+    `devlore update` executes whatever <kb>/scripts/update_kb.py the KB already
+    had. Every migration step was therefore inert on the update that delivered
+    it and only fired on the NEXT update — two passes per release, and the
+    prunes that did run ran under code a version older than the payload they
+    were pruning for. That is how v0.9.27 came to delete a per-KB launcher
+    using v0.9.26 logic that knew nothing about the global one replacing it.
+
+    Once the payload is on disk, re-exec so the remainder of the update runs
+    under the version that shipped it. Looping is impossible: the child carries
+    DEVLORE_UPDATE_REEXEC, an unchanged file re-execs nothing (the steady-state
+    case), and any read failure falls through to the old behaviour.
+    """
+    if os.environ.get("DEVLORE_UPDATE_REEXEC") or before is None:
+        return
+    try:
+        after = self_path.read_bytes()
+    except OSError:
+        return
+    if after == before:
+        return
+    print("  ↻ machinery changed — continuing under the freshly installed "
+          "update_kb.py (migrations land in this pass, not the next)")
+    sys.stdout.flush()
+    os.execve(sys.executable,
+              [sys.executable, str(self_path), *sys.argv[1:]],
+              dict(os.environ, DEVLORE_UPDATE_REEXEC="1"))
+
+
 def main() -> None:
+    # Snapshot this file before anything can overwrite it — the payload refresh
+    # below rewrites the very script we are executing.
+    _self_path = Path(__file__).resolve()
+    try:
+        _self_before: bytes | None = _self_path.read_bytes()
+    except OSError:
+        _self_before = None
     ap = argparse.ArgumentParser(description="Update this KB's machinery from the devlore dist.")
     ap.add_argument("--from", dest="src", help="Local dist/clone to update from "
                     "(default: ~/.devlore/dist, git-pulled).")
@@ -365,8 +414,13 @@ def main() -> None:
         sys.exit(f"error: {src} is not a devlore distribution")
     version = (src / "VERSION").read_text().strip() if (src / "VERSION").exists() else "?"
 
-    print(f"Updating machinery of {kb}")
-    print(f"  from {src} (v{version})")
+    if os.environ.get("DEVLORE_UPDATE_REEXEC"):
+        # Second half of a single update, not a second update — say so, or the
+        # repeated header reads as the very two-pass behaviour this removes.
+        print(f"  … resumed under v{version} machinery")
+    else:
+        print(f"Updating machinery of {kb}")
+        print(f"  from {src} (v{version})")
 
     # v0.9.25 migration step: if --to-new-layout was passed (or the KB still
     # has shared files in <kb>/scripts/ from v0.9.24), strip them, install the
@@ -432,6 +486,11 @@ def main() -> None:
                     if f.is_file():
                         _copy(f, kb / ".obsidian" / "plugins" / plug.name / f.name, src, kb)
                         n += 1
+    # The payload — this file included — is now on disk. Everything below is
+    # migration: it must run under the code that shipped it, not the code the
+    # KB happened to have when the update started.
+    _reexec_into_fresh_self(_self_path, _self_before)
+
     # v0.9.27: the per-KB <kb>/scripts/devlore copy and the per-KB .venv/ are gone.
     # If a stale install still carries them, drop them here so the diff is final.
     legacy = kb / "scripts" / "devlore"
